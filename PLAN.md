@@ -1,5 +1,13 @@
 # Bionic Pocket
 
+## Web access and Markdown
+
+- [ ] Add real free web search and bounded page reading to worker and ordinary phone chat.
+- [ ] Keep sources/links in answers and reports; distinguish network errors from unavailable tools.
+- [ ] Add native Markdown display: headings, emphasis, lists, quotes, links and copyable code blocks.
+- [ ] Test parsing/rendering data and web tool routing; build/sign Android0.1.2.
+- [ ] Deploy web-enabled bridge only while idle; publish update without token and verify assets.
+
 ## Runtime6 two-slot activation
 
 - [x] Two shared job slots, FIFO single-model inference and prompt queue cancellation.

@@ -35,7 +35,7 @@ def main():
             if 'assets/personal.json' in apk.namelist(): raise RuntimeError('Refusing to publish a personal APK')
         version=json.loads((ROOT/'version.json').read_text())
         tag='v'+version['name']
-        rel=api(token,'/repos/'+REPO+'/releases',{'tag_name':tag,'name':'Bionic Pocket '+version['name'],'body':'Android-клиент локального Bionic: история диалогов, проекты, задачи и проверка обновлений. Добавлена поддержка личной настройки при первой установке. Публичный APK не содержит токенов; личные APK распространяются отдельно.','draft':True})
+        rel=api(token,'/repos/'+REPO+'/releases',{'tag_name':tag,'name':'Bionic Pocket '+version['name'],'body':'Markdown в ответах: заголовки, выделение, списки, цитаты, ссылки, таблицы и блоки кода с копированием. На мосте добавлены реальный веб-поиск и чтение страниц, ссылки на источники. Сохраняются настройки подключения и история. Подпись APK проверена, парсер Markdown и API проверены тестами; на телефоне этот выпуск ещё не проверялся. Публичный APK не содержит токенов.','draft':True})
         try:
             for name in ['BionicPocket.apk','SHA256SUMS.txt','update.json']:
                 file=ROOT/'dist'/name

@@ -108,10 +108,12 @@ public final class MainActivity extends Activity {
             String content=m.optString("content");
             if("pending".equals(state)){waiting=true;content=m.optString("taskId").isEmpty()?"Готовлю ответ…":"Задача выполняется на ПК…";if(!pollError.isEmpty())content+="\n"+pollError;}
             if("error".equals(state))content="Не удалось получить ответ\n"+content;
-            TextView body=text(content,16,TEXT);body.setTextIsSelectable(true);body.setLineSpacing(dp(3),1);bubble.addView(body);
+            TextView body=null;
+            if(!user&&"completed".equals(state)){MarkdownView.add(this,bubble,content,TEXT,MUTED,GREEN);}
+            else {body=text(content,16,TEXT);body.setTextIsSelectable(true);body.setLineSpacing(dp(3),1);bubble.addView(body);}
             if(!m.optString("taskStatus").isEmpty()){gap(bubble,6);bubble.addView(text("Отчёт: "+m.optString("taskStatus")+" · интеграция отдельно",11,MUTED));}
             if("error".equals(state)){final JSONObject retry=m;bubble.addView(button("Повторить",()->retry(retry)));}
-            final String copied=content;body.setOnLongClickListener(v->{((android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Bionic",copied));toast("Скопировано");return true;});
+            final String copied=content;View.OnLongClickListener copyMessage=v->{((android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Bionic",copied));toast("Скопировано");return true;};label.setOnLongClickListener(copyMessage);if(body!=null)body.setOnLongClickListener(copyMessage);
             LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-1,-2);bp.topMargin=dp(10);if(user)bp.leftMargin=dp(32);else bp.rightMargin=dp(12);messages.addView(bubble,bp);
         }
         send.setEnabled(!waiting&&!networkBusy);send.setAlpha(send.isEnabled()?1f:.45f);

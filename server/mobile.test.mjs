@@ -6,7 +6,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createMobile } from './mobile.mjs';
 const config={model:'test',modelBaseUrl:'http://127.0.0.1:1235',port:1236,token:'test'.repeat(10),workspaces:{yago:{path:'worker',skills:[]}},routes:{parent:{hostId:'local',workspaceIds:['yago']}}};
-async function fixture(t,fetcher,settings=config){const dir=await fs.mkdtemp(path.join(os.tmpdir(),'bionic-mobile-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));return {dir,mobile:await createMobile(settings,dir,{fetch:fetcher})};}
+async function fixture(t,fetcher,settings=config,options={}){const dir=await fs.mkdtemp(path.join(os.tmpdir(),'bionic-mobile-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));return {dir,mobile:await createMobile(settings,dir,{fetch:fetcher,...options})};}
 async function call(mobile,url,body,busy=false){let output;const handled=await mobile.handle({url,method:body===undefined?'GET':'POST'},body===undefined?'':JSON.stringify(body),(status,value)=>output={status,value},busy);return {handled,...output};}
 const input=()=>({requestId:randomUUID(),chatId:randomUUID(),text:'Привет',mode:'chat',history:[]});
 test('chat accepts asynchronously, persists answer and deduplicates retry',async t=>{
@@ -80,4 +80,20 @@ test('simultaneous phone messages fill both slots; duplicate retry never starts 
  held.forEach(resolve=>resolve());
  for(let i=0;i<30&&mobile.isBusy();i++)await new Promise(resolve=>setTimeout(resolve,5));
  assert.equal(mobile.isBusy(),false);
+});
+
+test('ordinary phone chat searches, reads sources and returns real source links',async t=>{
+ let step=0;const calls=[];
+ const tool=(name,args)=>({ok:true,json:async()=>({choices:[{message:{role:'assistant',content:null,tool_calls:[{id:'web-'+step,type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]})});
+ const {mobile}=await fixture(t,async(_url,options)=>{
+   const body=JSON.parse(options.body);step++;
+   if(step===1){assert.equal(body.tool_choice,'required');assert.deepEqual(body.tools.map(x=>x.function.name),['web_search']);return tool('web_search',{query:'Go docs'});}
+   if(step===2){assert.equal(JSON.parse(body.messages.at(-1).content).results[0].url,'https://go.dev/doc/');return tool('read_web',{url:'https://go.dev/doc/'});}
+   assert.equal(JSON.parse(body.messages.at(-1).content).text,'Official Go documentation');
+   return {ok:true,json:async()=>({choices:[{message:{content:'Нашёл официальную документацию.'}}]})};
+ },config,{web:{search:async query=>{calls.push(query);return {results:[{title:'Go Docs',url:'https://go.dev/doc/'}]};},read:async url=>{calls.push(url);return {url,title:'Go Docs',text:'Official Go documentation'};}}});
+ const message={...input(),text:'Найди официальную документацию Go'};assert.equal((await call(mobile,'/mobile/messages',message)).status,202);
+ for(let i=0;i<40&&mobile.isBusy();i++)await new Promise(resolve=>setTimeout(resolve,5));
+ const result=(await call(mobile,'/mobile/jobs/'+message.requestId)).value;
+ assert.equal(result.state,'completed');assert.match(result.answer,/https:\/\/go.dev\/doc\//);assert.deepEqual(calls,['Go docs','https://go.dev/doc/']);assert.equal(step,3);
 });
