@@ -1,5 +1,5 @@
 """Publish source/releases using the existing Git credential manager; never print tokens."""
-import hashlib, json, os, pathlib, subprocess, sys, urllib.request, urllib.error
+import hashlib, json, os, pathlib, subprocess, sys, urllib.request, urllib.error, zipfile
 ROOT = pathlib.Path(__file__).resolve().parent
 RTK = os.environ.get('RTK', r'C:\Users\OLDest\.local\bin\rtk.exe')
 GIT = os.environ.get('GIT', r'C:\Users\OLDest\AppData\Local\hermes\git\cmd\git.exe')
@@ -31,9 +31,11 @@ def main():
         repo=api(token,'/user/repos',{'name':'bionic-pocket','description':'Android client for a self-hosted Bionic programming assistant. Chats, scoped tasks and signed app updates.','private':False,'auto_init':False})
         print(repo['html_url']); return
     if sys.argv[1]=='release':
+        with zipfile.ZipFile(ROOT/'dist'/'BionicPocket.apk') as apk:
+            if 'assets/personal.json' in apk.namelist(): raise RuntimeError('Refusing to publish a personal APK')
         version=json.loads((ROOT/'version.json').read_text())
         tag='v'+version['name']
-        rel=api(token,'/repos/'+REPO+'/releases',{'tag_name':tag,'name':'Bionic Pocket '+version['name'],'body':'Первый выпуск Android-клиента: диалоги с локальным Bionic, история, проекты, задачи с явным списком файлов, защищённое хранение токена и обновления через GitHub. Сборка и API проверены; установка на телефон выполняется пользователем.','draft':True})
+        rel=api(token,'/repos/'+REPO+'/releases',{'tag_name':tag,'name':'Bionic Pocket '+version['name'],'body':'Android-клиент локального Bionic: история диалогов, проекты, задачи и проверка обновлений. Добавлена поддержка личной настройки при первой установке. Публичный APK не содержит токенов; личные APK распространяются отдельно.','draft':True})
         try:
             for name in ['BionicPocket.apk','SHA256SUMS.txt','update.json']:
                 file=ROOT/'dist'/name

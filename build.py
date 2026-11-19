@@ -11,7 +11,8 @@ else:
     JDK=candidates[0]
 RTK=os.environ.get('RTK',r'C:\Users\OLDest\.local\bin\rtk.exe')
 TOOLS=SDK/'build-tools'/'35.0.0'
-WORK=ROOT/'build'; DIST=ROOT/'dist'; LOCAL=ROOT/'.local'
+PERSONAL='--personal' in sys.argv
+WORK=ROOT/'build'/('personal' if PERSONAL else 'public'); DIST=ROOT/'dist'; LOCAL=ROOT/'.local'
 def run(*args,env=None):
     subprocess.run([RTK,'proxy',*[str(a) for a in args]],check=True,cwd=ROOT,env=env)
 def main():
@@ -31,17 +32,25 @@ def main():
     unsigned=WORK/'unsigned.apk'; unsigned.write_bytes((WORK/'resources.apk').read_bytes())
     with zipfile.ZipFile(unsigned,'a',compression=zipfile.ZIP_DEFLATED) as apk:
         for dex in (WORK/'dex').glob('*.dex'):apk.write(dex,dex.name)
+        if PERSONAL:
+            personal=json.loads((LOCAL/'personal.json').read_text(encoding='utf-8'))
+            if len(personal.get('token',''))<32 or not personal.get('server','').startswith('https://'):raise RuntimeError('Personal connection settings missing')
+            apk.writestr('assets/personal.json',json.dumps(personal))
     run(TOOLS/'zipalign.exe','-f','4',unsigned,WORK/'aligned.apk')
     key=LOCAL/'release.keystore'; password=LOCAL/'keystore-password.txt'
     if key.exists()!=password.exists():raise RuntimeError('Signing key/password pair incomplete; restore it rather than rotate')
     if not key.exists():
         password.write_text(secrets.token_urlsafe(32),encoding='utf-8')
         run(JDK/'bin'/'keytool.exe','-genkeypair','-noprompt','-keystore',key,'-storepass:file',password,'-keypass:file',password,'-alias','bionic-pocket','-keyalg','RSA','-keysize','3072','-validity','10000','-dname','CN=Bionic Pocket, O=OLDest')
-    apk=DIST/'BionicPocket.apk'
+    apk=(LOCAL/'BionicPocket-personal.apk') if PERSONAL else (DIST/'BionicPocket.apk')
     run(JDK/'bin'/'java.exe','-jar',TOOLS/'lib'/'apksigner.jar','sign','--ks',key,'--ks-key-alias','bionic-pocket','--ks-pass','file:'+str(password),'--out',apk,WORK/'aligned.apk')
     run(JDK/'bin'/'java.exe','-jar',TOOLS/'lib'/'apksigner.jar','verify','--verbose','--print-certs',apk)
     run(TOOLS/'zipalign.exe','-c','4',apk)
     sha=hashlib.sha256(apk.read_bytes()).hexdigest()
+    if PERSONAL:
+        (LOCAL/'personal-verification.json').write_text(json.dumps({'version':version,'sha256':sha,'size':apk.stat().st_size,'personal':True},indent=2))
+        print('Personal APK ready (do not publish):',apk)
+        return
     (DIST/'SHA256SUMS.txt').write_text(sha+'  BionicPocket.apk\n',encoding='utf-8')
     (DIST/'update.json').write_text(json.dumps({'versionCode':version['code'],'versionName':version['name'],'url':f'https://github.com/OLDest/bionic-pocket/releases/download/v{version["name"]}/BionicPocket.apk','sha256':sha,'size':apk.stat().st_size},indent=2)+'\n',encoding='utf-8')
     print('APK ready:',apk)

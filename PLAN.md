@@ -1,5 +1,12 @@
 # Bionic Pocket
 
+## Personal provisioning
+
+- [x] Add optional first-launch personal settings import into encrypted preferences.
+- [x] Separate public and personal build artifacts; refuse personal APK publication.
+- [ ] Build/verify v0.1.1 public and personal APKs using the existing signing key.
+- [ ] Publish token-free source/release and deliver personal APK privately.
+
 - [x] Confirm Android SDK 35/build tools and JDK are available locally.
 - [x] Build authenticated asynchronous mobile chat API, with durable responses and bounded context.
 - [x] Build Android chat UI: history, projects, connection settings, reconnect and copy.

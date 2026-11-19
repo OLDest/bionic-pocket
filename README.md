@@ -56,6 +56,11 @@ rtk proxy py -3 build.py
 Сборка генерирует отдельный release-ключ в `.local/release.keystore`. Сохраните
 его и `.local/keystore-password.txt` отдельно: следующий выпуск должен быть
 подписан тем же ключом. Ключи, токены, APK и данные чатов исключены из Git.
+Для личного APK создайте `.local/personal.json` с полями server/token и
+запустите `build.py --personal`. При первом запуске настройки импортируются
+в Android Keystore, если токен ещё не задан. Личный APK сохраняется только в
+`.local/BionicPocket-personal.apk`; github_release.py запрещает его публикацию.
+Последующие обновления приложения сохраняют подключение.
 Для выпуска увеличьте version.json и версии в AndroidManifest.xml, выполните
 сборку, commit/push и `rtk proxy py -3 github_release.py release`. Публикация
 использует уже настроенный Git Credential Manager; токен не печатается.

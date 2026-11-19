@@ -49,6 +49,18 @@ public final class MainActivity extends Activity {
         prefs=getSharedPreferences("private",MODE_PRIVATE);
         server=prefs.getString("server",DEFAULT_URL);
         try {token=decrypt(prefs.getString("token",""));}catch(Exception e){toast("Не удалось открыть токен. Введите его заново.");}
+        if(token.isEmpty()) {
+            try {
+                JSONObject personal=new JSONObject(read(getAssets().open("personal.json"),4096));
+                String preset=personal.getString("token"), endpoint=personal.getString("server");
+                URI address=new URI(endpoint);
+                if(preset.length()<32||!"https".equals(address.getScheme())||address.getHost()==null)throw new IOException("Invalid personal settings");
+                token=preset;server=endpoint;
+                prefs.edit().putString("server",server).putString("token",encrypt(token)).apply();
+            } catch(FileNotFoundException ignored) {
+                // Public builds have no personal settings.
+            } catch(Exception e) { toast("Не удалось применить личные настройки подключения"); }
+        }
         try {chats=new JSONArray(prefs.getString("chats","[]"));}catch(Exception ignored){}
         String selected=prefs.getString("selected","");
         for(int i=0;i<chats.length();i++)if(chats.optJSONObject(i).optString("id").equals(selected))current=chats.optJSONObject(i);
