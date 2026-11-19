@@ -3,7 +3,12 @@ import hashlib,json,os,pathlib,secrets,subprocess,sys,zipfile
 ROOT=pathlib.Path(__file__).resolve().parent
 DEFAULT=ROOT.parents[1]/'2026-11-15'/'go-https-pikabu-ru-story-yandeks'/'yago'/'.tools'
 SDK=pathlib.Path(os.environ.get('ANDROID_HOME',str(DEFAULT/'android-sdk')))
-JDK=pathlib.Path(os.environ.get('JAVA_HOME',str(next((DEFAULT/'jdk').glob('jdk-*')))))
+if os.environ.get('JAVA_HOME'):
+    JDK=pathlib.Path(os.environ['JAVA_HOME'])
+else:
+    candidates=list((DEFAULT/'jdk').glob('jdk-*'))
+    if not candidates: raise RuntimeError('Set JAVA_HOME to an installed JDK 17')
+    JDK=candidates[0]
 RTK=os.environ.get('RTK',r'C:\Users\OLDest\.local\bin\rtk.exe')
 TOOLS=SDK/'build-tools'/'35.0.0'
 WORK=ROOT/'build'; DIST=ROOT/'dist'; LOCAL=ROOT/'.local'
