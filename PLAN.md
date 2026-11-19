@@ -9,7 +9,7 @@
 - [x] Activate runtime6 while idle and observe local+external requests accepted202/202 with runningJobs2.
 - [x] Both local/external live chat smoke responses persisted:393/475 characters, completed200, after runningJobs0.
 - [x] Current full suite45/45 passed; external auth remains401/200/403 as expected; no APK update needed.
-- [ ] Synchronize source to GitHub.
+- [x] Synchronize source to GitHub (runtime6 mobile/scheduling implementation and tests).
 
 ## Personal provisioning
 
