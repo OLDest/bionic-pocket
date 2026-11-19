@@ -98,6 +98,7 @@ public final class MainActivity extends Activity {
     private JSONArray entries(){JSONArray a=current.optJSONArray("messages");if(a==null){a=new JSONArray();put(current,"messages",a);}return a;}
     private void newChat(boolean show){current=new JSONObject();put(current,"id",UUID.randomUUID().toString());put(current,"title","Новый разговор");put(current,"project","");put(current,"messages",new JSONArray());chats.put(current);if(show){input.setText("");render();save();}}
     private void render(){
+        final boolean followBottom=scroll.getChildCount()==0||scroll.getChildAt(0).getHeight()-scroll.getHeight()-scroll.getScrollY()<=dp(80);
         rendering=true;title.setText(current.optString("title","Bionic Pocket"));messages.removeAllViews();JSONArray list=entries();
         if(list.length()==0){LinearLayout welcome=column();welcome.setGravity(Gravity.CENTER);TextView mark=text("B",48,GREEN);mark.setTypeface(null,Typeface.BOLD);welcome.addView(mark);TextView h=text("Помощник под рукой",23,TEXT);h.setTypeface(null,Typeface.BOLD);welcome.addView(h);gap(welcome,12);TextView hint=text("Задайте вопрос, обсудите код или\nпоручите работу с файлами проекта.",15,MUTED);hint.setGravity(Gravity.CENTER);welcome.addView(hint);gap(welcome,20);welcome.addView(button("Проверить подключение",()->connect(true)));gap(welcome,8);welcome.addView(button("Настроить сервер и токен",()->settings()));messages.addView(welcome,new LinearLayout.LayoutParams(-1,-2));}
         boolean waiting=false;
@@ -118,7 +119,9 @@ public final class MainActivity extends Activity {
         }
         send.setEnabled(!waiting&&!networkBusy);send.setAlpha(send.isEnabled()?1f:.45f);
         String project=current.optString("project");int selected=0;for(int i=0;i<projects.length();i++)if(project.equals(projects.optJSONObject(i).optString("id")))selected=i+1;projectPicker.setSelection(selected);rendering=false;
-        scroll.post(()->scroll.fullScroll(View.FOCUS_DOWN));
+        // fullScroll also moves keyboard focus into the transcript. Polling must
+        // never take focus (or the IME composing cursor) from either editor.
+        if(followBottom)scroll.post(()->scroll.scrollTo(0,Math.max(0,messages.getHeight()-scroll.getHeight())));
     }
     private void history(){
         ArrayList<String> names=new ArrayList<>();names.add("⚙ Настройки и обновления");for(int i=chats.length()-1;i>=0;i--)names.add(chats.optJSONObject(i).optString("title"));

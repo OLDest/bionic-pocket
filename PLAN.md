@@ -1,12 +1,25 @@
 # Bionic Pocket
 
+## Keyboard focus repair
+
+- [x] Identify polling fullScroll focus transfer; replace with focus-neutral scrolling, preserving reading position.
+- [ ] Build, verify signing and publish 0.1.3.
+
 ## Web access and Markdown
 
-- [ ] Add real free web search and bounded page reading to worker and ordinary phone chat.
-- [ ] Keep sources/links in answers and reports; distinguish network errors from unavailable tools.
-- [ ] Add native Markdown display: headings, emphasis, lists, quotes, links and copyable code blocks.
-- [ ] Test parsing/rendering data and web tool routing; build/sign Android0.1.2.
-- [ ] Deploy web-enabled bridge only while idle; publish update without token and verify assets.
+- [x] Add real free web search and bounded page reading to worker and ordinary phone chat.
+- [x] Live phone search returned strings.Fields explanation with actual pkg.go.dev link; web evidence retained.
+- [x] Add native Markdown display: headings, emphasis, lists, quotes, links, tables and copyable code blocks.
+- [x] Parser JVM checks and54 backend tests pass; Android0.1.2 built/signed (no phone UI test).
+- [x] Activate runtime8 while idle, publish0.1.2 and verify downloaded APK hash/size.
+
+## Helper blocker repair
+
+- [x] Review bad generated Go test: illegal rune literal, wrong expected values and contradictory truncation assertion.
+- [x] Correct test in coordinator worktree; pinned gofmt and focused go test pass.
+- [x] Add watched-file command cache invalidation, stale-prerequisite checks and bounded repair attempts with full logs.
+- [x] Activate runtime8; new helper correction/verification task fbaab6f5-4b04-4a46-93a1-cf8dd3befe8e accepted.
+- [x] Create fresh quiet mailbox child01a1f577-eb16-77e0-b154-d116bebc187d and send activation; no parent polling.
 
 ## Runtime6 two-slot activation
 
