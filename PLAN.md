@@ -4,8 +4,10 @@
 
 - [x] Add optional first-launch personal settings import into encrypted preferences.
 - [x] Separate public and personal build artifacts; refuse personal APK publication.
-- [ ] Build/verify v0.1.1 public and personal APKs using the existing signing key.
-- [ ] Publish token-free source/release and deliver personal APK privately.
+- [x] Build/verify v0.1.1 public and personal APKs using the existing signing key.
+- [x] Verify personal APK settings and absence of token/personal asset in the public APK.
+- [x] Publish token-free source/release and deliver personal APK through a private random HTTPS link valid24h.
+- [ ] On-device install: no authorized ADB connection; user can install the private APK in the phone browser. TV disconnected without installation.
 
 - [x] Confirm Android SDK 35/build tools and JDK are available locally.
 - [x] Build authenticated asynchronous mobile chat API, with durable responses and bounded context.
