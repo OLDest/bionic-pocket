@@ -1,5 +1,16 @@
 # Bionic Pocket
 
+## Runtime6 two-slot activation
+
+- [x] Two shared job slots, FIFO single-model inference and prompt queue cancellation.
+- [x] Simultaneous admissions accept both independent requests; retries remain idempotent.
+- [x] Phone YaGo tasks map to a stable separate yago-phone worktree; review leases remain.
+- [x] Scheduling/isolation/auth/shutdown tests pass; runtime/source mobile modules match.
+- [x] Activate runtime6 while idle and observe local+external requests accepted202/202 with runningJobs2.
+- [x] Both local/external live chat smoke responses persisted:393/475 characters, completed200, after runningJobs0.
+- [x] Current full suite45/45 passed; external auth remains401/200/403 as expected; no APK update needed.
+- [ ] Synchronize source to GitHub.
+
 ## Personal provisioning
 
 - [x] Add optional first-launch personal settings import into encrypted preferences.

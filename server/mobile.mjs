@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { createJobSlots, createSubmissionGate } from './scheduling.mjs';
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 async function readJson(file) { return JSON.parse(await fs.readFile(file, 'utf8')); }
@@ -12,6 +13,13 @@ async function writeJson(file, value) {
 }
 export async function createMobile(config, storage, options = {}) {
   const fetcher = options.fetch ?? fetch;
+  const slots = options.slots ?? createJobSlots(config.maxConcurrentTasks ?? 2);
+  const projects = config.mobileWorkspaces ?? Object.fromEntries(Object.keys(config.workspaces).map(id => [id, id]));
+  for (const [id, target] of Object.entries(projects)) {
+    if (!Object.hasOwn(config.workspaces, id) || !Object.hasOwn(config.workspaces, target)) throw Error('Invalid mobile workspace mapping');
+    if (config.mobileWorkspaces && path.resolve(config.workspaces[id].path).toLowerCase() === path.resolve(config.workspaces[target].path).toLowerCase()) throw Error('Phone tasks require a separate checkout');
+    if (!Object.values(config.routes).some(route => route.workspaceIds.includes(target))) throw Error('Phone worker requires a registered review route');
+  }
   const folder = path.join(storage, 'mobile-jobs');
   await fs.mkdir(folder, { recursive: true });
   // A process restart cannot safely replay a model request or file-changing task.
@@ -23,7 +31,8 @@ export async function createMobile(config, storage, options = {}) {
       await writeJson(file, { ...job, state: 'failed', error: 'Мост перезапущен. Отправьте сообщение ещё раз.' });
     }
   }
-  let accepting = false, chatActive = false;
+  let accepting = false, chatActive = 0;
+  const admissions = createSubmissionGate(config.maxQueue ?? 20);
   const fileFor = id => {
     if (!uuid.test(id)) throw Error('Некорректный идентификатор');
     return path.join(folder, `${id}.json`);
@@ -36,7 +45,7 @@ export async function createMobile(config, storage, options = {}) {
     if (!job.taskId || job.state !== 'running') return job;
     try {
       const report = await readJson(path.join(storage, 'tasks', job.taskId, 'result.json'));
-      if (report.taskId !== job.taskId || report.workspaceId !== job.workspaceId) throw Error('Report route mismatch');
+      if (report.taskId !== job.taskId || report.workspaceId !== (job.workerWorkspaceId ?? job.workspaceId)) throw Error('Report route mismatch');
       const lines = [report.summary, '', ...(report.tests ?? []).map(x => `Проверка: ${x}`), ...(report.blockers ?? []).map(x => `Проблема: ${x}`), ...(report.changedFiles ?? []).map(x => `Изменён файл: ${x.path}`)];
       job = { ...job, state: report.status === 'failed' ? 'failed' : 'completed', taskStatus: report.status, answer: lines.join('\n').trim(), completedAt: report.completedAt };
       await writeJson(fileFor(job.id), job);
@@ -47,7 +56,7 @@ export async function createMobile(config, storage, options = {}) {
     if (!uuid.test(input.requestId ?? '') || !uuid.test(input.chatId ?? '')) throw Error('Требуется идентификатор сообщения и чата');
     if (typeof input.text !== 'string' || !input.text.trim() || input.text.length > 8000) throw Error('Сообщение: от 1 до 8000 символов');
     if (!['chat', 'task'].includes(input.mode ?? 'chat')) throw Error('Неизвестный режим');
-    if (input.workspaceId && !Object.hasOwn(config.workspaces, input.workspaceId)) throw Error('Проект не зарегистрирован');
+    if (input.workspaceId && !Object.hasOwn(projects, input.workspaceId)) throw Error('Проект не зарегистрирован');
     if (!Array.isArray(input.history ?? []) || (input.history ?? []).length > 20) throw Error('Слишком длинная история');
     let total = input.text.length;
     for (const message of input.history ?? []) {
@@ -57,7 +66,7 @@ export async function createMobile(config, storage, options = {}) {
     if (total > 18000) throw Error('История слишком велика. Начните новый чат.');
     return { ...input, text: input.text.trim(), mode: input.mode ?? 'chat' };
   }
-  async function chat(job, input) {
+  async function chat(job, input, release) {
     try {
       const modelBase = config.modelBaseUrl.replace(/\/$/, '');
       if (config.loadProfiles?.[config.model]) {
@@ -86,17 +95,17 @@ export async function createMobile(config, storage, options = {}) {
       if (typeof answer !== 'string' || !answer.trim()) throw Error('Модель вернула пустой ответ');
       await writeJson(fileFor(job.id), { ...job, state: 'completed', answer, completedAt: new Date().toISOString() });
     } catch (error) {
-      await writeJson(fileFor(job.id), { ...job, state: 'failed', error: error.name === 'TimeoutError' ? 'Модель не ответила за 3 минуты.' : error.message });
-    } finally { chatActive = false; }
+      await writeJson(fileFor(job.id), { ...job, state: 'failed', error: error.name === 'TimeoutError' ? 'Превышено время ожидания модели. Повторите запрос.' : error.message });
+    } finally { chatActive--; release(); }
   }
   return {
-    isBusy: () => chatActive || accepting,
-    isChatBusy: () => chatActive,
+    isBusy: () => chatActive > 0 || accepting || admissions.busy,
+    isChatBusy: () => chatActive > 0,
     async handle(req, data, reply, workerBusy) {
       const parsed = new URL(req.url, 'http://localhost');
       if (!parsed.pathname.startsWith('/mobile/')) return false;
       if (req.method === 'GET' && parsed.pathname === '/mobile/config') {
-        reply(200, { apiVersion: 1, model: config.model, projects: Object.keys(config.workspaces).map(id => ({ id, name: id === 'yago' ? 'YaGo' : id })), chatBusy: chatActive, workerBusy });
+        reply(200, { apiVersion: 1, model: config.model, projects: Object.keys(projects).map(id => ({ id, name: id === 'yago' ? 'YaGo' : id })), chatBusy: chatActive > 0, workerBusy, runningJobs: slots.active, jobSlots: slots.capacity });
         return true;
       }
       const match = parsed.pathname.match(/^\/mobile\/jobs\/([0-9a-f-]{36})$/i);
@@ -107,37 +116,44 @@ export async function createMobile(config, storage, options = {}) {
       }
       if (req.method !== 'POST' || parsed.pathname !== '/mobile/messages') { reply(404, { error: 'Неизвестный мобильный маршрут' }); return true; }
       const input = validate(JSON.parse(data));
+      const releaseAdmission = await admissions.acquire();
+      if (!releaseAdmission) { reply(429, { error: 'Очередь приёма переполнена. Повторите позже.' }); return true; }
+      try {
       try {
         const old = await readJson(fileFor(input.requestId));
         if (JSON.stringify(old.request) !== JSON.stringify(input)) { reply(409, { error: 'Идентификатор уже использован для другого сообщения' }); return true; }
         reply(200, publicJob(await refresh(old))); return true;
       } catch (error) { if (error.code !== 'ENOENT') throw error; }
-      if (accepting || chatActive || workerBusy) { reply(409, { error: 'Помощник занят. Дождитесь ответа или повторите позже.' }); return true; }
+      const release = input.mode === 'chat' ? slots.acquire('mobile-chat') : null;
+      if (input.mode === 'chat' && !release) { reply(429, { error: 'Оба слота заняты. Повторите после завершения одной задачи.' }); return true; }
       accepting = true;
       let job = { id: input.requestId, chatId: input.chatId, mode: input.mode, workspaceId: input.workspaceId ?? '', state: 'running', createdAt: new Date().toISOString(), request: input };
       try {
         if (input.mode === 'task') {
-          const workspace = config.workspaces[input.workspaceId];
+          const workerWorkspaceId = projects[input.workspaceId];
+          const workspace = config.workspaces[workerWorkspaceId];
           if (!workspace) throw Error('Для задачи выберите проект');
           const files = input.files;
           if (!Array.isArray(files) || !files.length || files.length > 30 || files.some(x => typeof x !== 'string' || !x.trim())) throw Error('Укажите от 1 до 30 файлов задачи');
           if (typeof input.readOnly !== 'boolean') throw Error('Укажите режим доступа к файлам');
-          const route = Object.entries(config.routes).find(([, route]) => route.workspaceIds.includes(input.workspaceId));
+          const route = Object.entries(config.routes).find(([, route]) => route.workspaceIds.includes(workerWorkspaceId));
           if (!route) throw Error('Проект не имеет зарегистрированного чата проверки');
-          const task = { workspaceId: input.workspaceId, parentThreadId: route[0], hostId: route[1].hostId, title: `Телефон: ${input.text.slice(0, 150)}`, prompt: `Scope: ${input.readOnly ? 'Read-only investigation; do not change any files.' : 'Implement the user request only in the authorized worker files.'}\n${input.text}\nReturn a concise Russian file report with evidence. Shell through RTK is required. No commit/push/deploy or main integration.`, acceptance: 'Report actual findings, edits, checks and blockers. Preserve task scope and local changes.', readPaths: files, writePaths: input.readOnly ? [] : files, skills: workspace.skills };
+          const task = { workspaceId: workerWorkspaceId, parentThreadId: route[0], hostId: route[1].hostId, title: `Телефон: ${input.text.slice(0, 150)}`, prompt: `Scope: ${input.readOnly ? 'Read-only investigation; do not change any files.' : 'Implement the user request only in the authorized worker files.'}\n${input.text}\nReturn a concise Russian file report with evidence. Shell through RTK is required. No commit/push/deploy or main integration.`, acceptance: 'Report actual findings, edits, checks and blockers. Preserve task scope and local changes.', readPaths: files, writePaths: input.readOnly ? [] : files, skills: workspace.skills };
           const response = await fetcher(`http://127.0.0.1:${config.port}/tasks`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.token}` }, body: JSON.stringify(task), signal: AbortSignal.timeout(10000) });
           const result = await response.json();
           if (!response.ok) { reply(response.status, { error: result.error ?? 'Не удалось принять задачу' }); return true; }
           job.taskId = result.taskId;
-        } else { chatActive = true; }
+          job.workerWorkspaceId = workerWorkspaceId;
+        } else { chatActive++; }
         await writeJson(fileFor(job.id), job);
         reply(202, publicJob(job));
-        if (input.mode === 'chat') void chat(job, input);
+        if (input.mode === 'chat') void chat(job, input, release);
         return true;
       } catch (error) {
-        if (input.mode === 'chat') chatActive = false;
+        if (input.mode === 'chat') { chatActive--; release(); }
         throw error;
       } finally { accepting = false; }
+      } finally { releaseAdmission(); }
     }
   };
 }
