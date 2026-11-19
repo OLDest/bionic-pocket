@@ -1,0 +1,9 @@
+.local/
+build/
+dist/
+*.keystore
+*.jks
+*.apk
+*.idsig
+node_modules/
+*.log

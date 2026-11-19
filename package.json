@@ -1,0 +1,1 @@
+{"name":"bionic-pocket","version":"0.1.0","private":true,"type":"module","scripts":{"test":"node --test server/*.test.mjs"}}
