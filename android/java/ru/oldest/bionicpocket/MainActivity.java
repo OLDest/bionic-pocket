@@ -117,7 +117,9 @@ public final class MainActivity extends Activity {
             final String copied=content;View.OnLongClickListener copyMessage=v->{((android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Bionic",copied));toast("Скопировано");return true;};label.setOnLongClickListener(copyMessage);if(body!=null)body.setOnLongClickListener(copyMessage);
             LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-1,-2);bp.topMargin=dp(10);if(user)bp.leftMargin=dp(32);else bp.rightMargin=dp(12);messages.addView(bubble,bp);
         }
-        send.setEnabled(!waiting&&!networkBusy);send.setAlpha(send.isEnabled()?1f:.45f);
+        // An older reply or its status request must not lock the composer.
+        // Each submission has its own request ID; capacity is enforced by the API.
+        send.setEnabled(true);send.setAlpha(1f);
         String project=current.optString("project");int selected=0;for(int i=0;i<projects.length();i++)if(project.equals(projects.optJSONObject(i).optString("id")))selected=i+1;projectPicker.setSelection(selected);rendering=false;
         // fullScroll also moves keyboard focus into the transcript. Polling must
         // never take focus (or the IME composing cursor) from either editor.

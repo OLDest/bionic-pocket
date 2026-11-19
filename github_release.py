@@ -35,7 +35,7 @@ def main():
             if 'assets/personal.json' in apk.namelist(): raise RuntimeError('Refusing to publish a personal APK')
         version=json.loads((ROOT/'version.json').read_text())
         tag='v'+version['name']
-        rel=api(token,'/repos/'+REPO+'/releases',{'tag_name':tag,'name':'Bionic Pocket '+version['name'],'body':'Исправлены скачки клавиатуры при обновлении ответа: прокрутка больше не перехватывает фокус ввода. При чтении старых сообщений позиция сохраняется. Настройки и история сохраняются.','draft':True})
+        rel=api(token,'/repos/'+REPO+'/releases',{'tag_name':tag,'name':'Bionic Pocket '+version['name'],'body':'Исправлена блокировка кнопки отправки во время ожидания предыдущего ответа и проверки его состояния. Можно отправить второе сообщение; лимит двух задач проверяет сервер. Настройки и история сохраняются.','draft':True})
         try:
             for name in ['BionicPocket.apk','SHA256SUMS.txt','update.json']:
                 file=ROOT/'dist'/name

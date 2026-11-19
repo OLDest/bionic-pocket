@@ -1,9 +1,14 @@
 # Bionic Pocket
 
+## Send button repair
+
+- [x] Remove composer lock caused by pending replies and status requests; API retains capacity enforcement.
+- [ ] Build, verify and publish 0.1.4.
+
 ## Keyboard focus repair
 
 - [x] Identify polling fullScroll focus transfer; replace with focus-neutral scrolling, preserving reading position.
-- [ ] Build, verify signing and publish 0.1.3.
+- [x] Build, verify signing and publish 0.1.3; downloaded release matches local APK.
 
 ## Web access and Markdown
 
