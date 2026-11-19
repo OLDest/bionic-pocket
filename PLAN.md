@@ -5,7 +5,8 @@
 - [x] Helper0961 applied coordinator-reviewed patch and actually passed all5 worker commands; expected MainSHA confirmed.
 - [x] Parent reran real JVM HTTP/recovery cases, integrated only MainActivity+productionPolicy and reran primary checks.
 - [x] Android0.1.5/code6 built and same signing key verified; Markdown and22 backend tests pass.
-- [ ] Publish source/release and verify downloaded APK; Settings feedback and broader Markdown remain pending separately.
+- [x] Publish source4e4ee38 and release0.1.5; downloaded APK SHA/size matches signed local artifact. DEX contains new recovery policy/text and excludes old guaranteed-answer promise.
+- [ ] Finish Settings action feedback and broader Markdown support separately; no claim of full UI verification.
 
 ## Full app reliability review (Bionic implements, parent reviews)
 
