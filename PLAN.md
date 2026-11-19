@@ -1,9 +1,50 @@
 # Bionic Pocket
 
+## Release0.1.5 — verified message recovery
+
+- [x] Helper0961 applied coordinator-reviewed patch and actually passed all5 worker commands; expected MainSHA confirmed.
+- [x] Parent reran real JVM HTTP/recovery cases, integrated only MainActivity+productionPolicy and reran primary checks.
+- [x] Android0.1.5/code6 built and same signing key verified; Markdown and22 backend tests pass.
+- [ ] Publish source/release and verify downloaded APK; Settings feedback and broader Markdown remain pending separately.
+
+## Full app reliability review (Bionic implements, parent reviews)
+
+- [x]495 rejected: malformed poll syntax, missing404POST, background UI writes. Coordinator prepared SHA-bound exact recovery patch; isolated real-method JVM and Android compilePASS.
+- [x] Delegate application/checks as0961d3ff in enforced ordered executor; coordinator design, helper application/verification. Actual worker result/main integration/publication still pending.
+
+- [x] Parent reviewed0baad: actualApiException and policyStringGET fix, AndroidcompilePASS. Helper ran no checks and left recoveryunchanged; no integration.
+- [x] Add trusted JVM fault harness: actualAPIstatus checksPASS; actualofflinePOSTFAIL expectedpending goterror. Runtime15 completion gate enforces required commands/code/report.
+- [x] Submit49574a94 foronlysubmit/poll fixes with trusted verification and current source supplied. Recovery/UI/Settings/Markdown release remains incomplete.
+
+- [x] Diagnose native slowprompt plus context duplication/phase budget and incompatible namedtoolchoice. Runtime14 fixes these;69runtime+22backend checks pass, live required/single-tool call HTTP200/10.81s.
+- [x] Continue preserved ApiException/policy/delivery work as0baadbb9 with actual javac errors. App recovery, Settings and Markdown completion still pending actual implementation/review.
+
+- [x] Root cause identified: actual slow9B prompt plus bridge context-budget bug. Runtime14 fixes source duplication/phase budget and adds queue/request timing; native9Bparallel1/GPU65% persisted.68runtime+22backend tests pass.
+- [x] Parent compiled current worker:2missingApiException errors. Precise preserved-code continuation4b0509ad accepted; helper must fix class/policy/delivery and run real app tests before integration.
+
+- [x] Stop2a5 read loop preserving edits; runtime13/9B active. Taskb881102f receives exact source upfront and starts with completing ApiException; requires delivery/Android/Markdown/API checks.63 bridge checks pass; app still unverified.
+
+- [x] User-approved stop of looping e160 preserved edits and hashed snapshot; runtime12 activated, continuation2a5b205e accepted immediately. Review actual implementation and checks on report; app still unverified.
+
+- [x] Runtime12 strict PowerShell/RTK + UTF8 validated (61 runtime checks); preserved-worktree continuation8cb68316 staged after e160, requiring delivery/Android/Markdown/API checks before completion.
+
+- [x] Runtime11 prevents source/compression loop and supplies exact source-verified edits;56 bridge checks pass. Task e160b740 accepted after preflight, requires production recovery policy + tests + actual MainActivity integration/checks.
+
+- [x] Runtime10 preflight and complete bounded-source retention tested; user selected9B. New app recovery task742ca47d accepted202 with preflight evidence; prior4B attempts changed no source.
+
+- [x] Identify delivery gaps: ambiguous POST errors, endless GET404, selected-chat-only polling and update I/O blocking.
+- [x] Prepare separate Bionic-Pocket worktree and bounded recovery assignment.
+- [x] Correct rejected directory readPaths to verified exact files; replacement task 4f3067b4-1df0-4de0-85e3-accb635a318c accepted202.
+- [x] After helper misread missing writable files, narrow to existing delivery methods, explicitly permit new patch/report files, pin JAVA_HOME and provide bounded source command; task 72fdffc7 accepted202.
+- [x] Correct command-output truncation with three short UTF-8 method reads; replacement submitted. Verify standing mailbox ACTIVE every5min, exact child target and actionable-only gate from saved configuration.
+- [ ] Bionic implements delivery recovery and regression checks; parent reviews actual changes.
+- [ ] Bionic improves Settings action/progress/error feedback and checks unsupported Markdown cases in separate follow-up tasks.
+- [ ] Verify send/receive/reconnect/keyboard together; build and publish reviewed changes.
+
 ## Send button repair
 
 - [x] Remove composer lock caused by pending replies and status requests; API retains capacity enforcement.
-- [ ] Build, verify and publish 0.1.4.
+- [x] Build, verify signing and publish 0.1.4; downloaded release hash matches local APK.
 
 ## Keyboard focus repair
 

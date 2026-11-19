@@ -137,11 +137,22 @@ public final class MainActivity extends Activity {
     private SecretKey key() throws Exception {KeyStore store=KeyStore.getInstance("AndroidKeyStore");store.load(null);if(store.containsAlias("bionic-token"))return (SecretKey)store.getKey("bionic-token",null);KeyGenerator gen=KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES,"AndroidKeyStore");gen.init(new KeyGenParameterSpec.Builder("bionic-token",KeyProperties.PURPOSE_ENCRYPT|KeyProperties.PURPOSE_DECRYPT).setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build());return gen.generateKey();}
     private String encrypt(String s) throws Exception {Cipher c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.ENCRYPT_MODE,key());return android.util.Base64.encodeToString(c.getIV(),2)+":"+android.util.Base64.encodeToString(c.doFinal(s.getBytes(StandardCharsets.UTF_8)),2);}
     private String decrypt(String s) throws Exception {if(s.isEmpty())return "";String[] p=s.split(":",2);Cipher c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.DECRYPT_MODE,key(),new GCMParameterSpec(128,android.util.Base64.decode(p[0],2)));return new String(c.doFinal(android.util.Base64.decode(p[1],2)),StandardCharsets.UTF_8);}
+    /**
+     * Custom exception for API errors with HTTP status preservation.
+     */
+    static class ApiException extends IOException {
+        final int status;
+        ApiException(String message, int status) {
+            super(message);
+            this.status = status;
+        }
+    }
+
     private JSONObject api(String route,JSONObject payload) throws Exception {
         if(token.isEmpty())throw new Exception("Введите токен в настройках");
         HttpsURLConnection c=(HttpsURLConnection)new URL(server+route).openConnection();c.setInstanceFollowRedirects(false);c.setConnectTimeout(10000);c.setReadTimeout(20000);c.setRequestProperty("Authorization","Bearer "+token);c.setRequestProperty("Accept","application/json");
         try{if(payload!=null){c.setRequestMethod("POST");c.setDoOutput(true);c.setRequestProperty("Content-Type","application/json; charset=utf-8");try(OutputStream out=c.getOutputStream()){out.write(payload.toString().getBytes(StandardCharsets.UTF_8));}}
-            int code=c.getResponseCode();String data=read(code>=400?c.getErrorStream():c.getInputStream(),1000000);JSONObject result;try{result=new JSONObject(data);}catch(Exception e){throw new Exception("Сервер вернул некорректный ответ ("+code+")");}if(code<200||code>=300)throw new Exception(code==401?"Неверный токен доступа":result.optString("error","Ошибка HTTP "+code));return result;
+            int code=c.getResponseCode();String data=read(code>=400?c.getErrorStream():c.getInputStream(),1000000);JSONObject result;try{result=new JSONObject(data);}catch(Exception e){throw new ApiException("Сервер вернул некорректный ответ ("+code+")",code);}if(code<200||code>=300)throw new ApiException(code==401?"Неверный токен доступа":result.optString("error","Ошибка HTTP "+code),code);return result;
         }finally{c.disconnect();}
     }
     private static String read(InputStream stream,int limit) throws Exception {if(stream==null)return "";try(InputStream in=stream;ByteArrayOutputStream out=new ByteArrayOutputStream()){byte[] buf=new byte[8192];int n;while((n=in.read(buf))!=-1){if(out.size()+n>limit)throw new IOException("Ответ слишком большой");out.write(buf,0,n);}return out.toString("UTF-8");}}
@@ -153,10 +164,96 @@ public final class MainActivity extends Activity {
         submitNew(request);
     }catch(Exception e){toast(e.getMessage());}}
     private void submitNew(JSONObject request){JSONObject user=new JSONObject();put(user,"role","user");put(user,"state","completed");put(user,"content",request.optString("text"));entries().put(user);JSONObject answer=new JSONObject();put(answer,"role","assistant");put(answer,"state","pending");put(answer,"content","");put(answer,"jobId",request.optString("requestId"));put(answer,"request",request);entries().put(answer);if(entries().length()==2)put(current,"title",request.optString("text").substring(0,Math.min(32,request.optString("text").length())));input.setText("");pollError="";save();render();submit(answer);}
-    private void submit(JSONObject answer){networkBusy=true;render();io.execute(()->{try{JSONObject job=api("/mobile/messages",answer.optJSONObject("request"));main.post(()->{apply(answer,job);networkBusy=false;save();render();});}catch(Exception e){main.post(()->{put(answer,"state","error");put(answer,"content",e.getMessage());networkBusy=false;save();render();});}});}
+    private void submit(JSONObject answer) {
+        networkBusy = true;
+        render();
+        final JSONObject request = answer.optJSONObject("request");
+        io.execute(() -> {
+            try {
+                final JSONObject job = api("/mobile/messages", request);
+                main.post(() -> {
+                    apply(answer, job);
+                    pollError = "";
+                    networkBusy = false;
+                    save();
+                    render();
+                });
+            } catch (Exception error) {
+                final boolean retryable = error instanceof ApiException
+                        ? DeliveryPolicy.isRetryable(((ApiException) error).status)
+                        : error instanceof IOException;
+                final String detail = error.getMessage();
+                main.post(() -> {
+                    if (retryable) {
+                        put(answer, "state", "pending");
+                        pollError = "Нет связи или сервер временно недоступен. Повторная проверка при подключении.";
+                    } else {
+                        put(answer, "state", "error");
+                        put(answer, "content", detail == null ? "Ошибка отправки" : detail);
+                        pollError = "";
+                    }
+                    networkBusy = false;
+                    save();
+                    render();
+                });
+            }
+        });
+    }
     private void retry(JSONObject answer){if(answer.optBoolean("retryNew")){String id=UUID.randomUUID().toString();put(answer,"jobId",id);put(answer.optJSONObject("request"),"requestId",id);put(answer,"retryNew",false);}put(answer,"state","pending");put(answer,"content","");pollError="";submit(answer);}
     private void apply(JSONObject answer,JSONObject job){String state=job.optString("state");if("completed".equals(state)){put(answer,"state","completed");put(answer,"content",job.optString("answer","Ответ получен"));put(answer,"taskStatus",job.optString("taskStatus"));}else if("failed".equals(state)){put(answer,"retryNew",true);put(answer,"state","error");put(answer,"content",job.optString("error",job.optString("answer","Задача завершилась с ошибкой")));}else{put(answer,"state","pending");put(answer,"taskId",job.optString("taskId"));}}
-    private void poll(){if(networkBusy||token.isEmpty())return;JSONObject target=null;JSONArray all=entries();for(int i=0;i<all.length();i++)if("pending".equals(all.optJSONObject(i).optString("state"))){target=all.optJSONObject(i);break;}if(target==null)return;final JSONObject answer=target;networkBusy=true;io.execute(()->{try{JSONObject job=api("/mobile/jobs/"+answer.optString("jobId"),null);main.post(()->{apply(answer,job);pollError="";networkBusy=false;save();render();});}catch(Exception e){main.post(()->{pollError="Связь прервана. Ответ заберу после подключения.";networkBusy=false;render();});}});}
+    private void poll() {
+        if (networkBusy || token.isEmpty()) return;
+        JSONObject target = null;
+        JSONArray all = entries();
+        for (int i = 0; i < all.length(); i++) {
+            if ("pending".equals(all.optJSONObject(i).optString("state"))) {
+                target = all.optJSONObject(i);
+                break;
+            }
+        }
+        if (target == null) return;
+        final JSONObject answer = target;
+        networkBusy = true;
+        io.execute(() -> {
+            try {
+                JSONObject job;
+                try {
+                    job = api("/mobile/jobs/" + answer.optString("jobId"), null);
+                } catch (ApiException lookupError) {
+                    if (!DeliveryPolicy.isGetNotFound("GET", lookupError.status)) throw lookupError;
+                    JSONObject request = answer.optJSONObject("request");
+                    if (request == null) throw new IllegalStateException("Исходное сообщение не сохранено. Отправьте его заново.");
+                    job = api("/mobile/messages", request);
+                }
+                final JSONObject response = job;
+                main.post(() -> {
+                    apply(answer, response);
+                    pollError = "";
+                    networkBusy = false;
+                    save();
+                    render();
+                });
+            } catch (Exception error) {
+                final boolean retryable = error instanceof ApiException
+                        ? DeliveryPolicy.isRetryable(((ApiException) error).status)
+                        : error instanceof IOException;
+                final String detail = error.getMessage();
+                main.post(() -> {
+                    if (retryable) {
+                        put(answer, "state", "pending");
+                        pollError = "Нет связи или сервер временно недоступен. Повторная проверка при подключении.";
+                    } else {
+                        put(answer, "state", "error");
+                        put(answer, "content", detail == null ? "Ошибка получения ответа" : detail);
+                        pollError = "";
+                    }
+                    networkBusy = false;
+                    save();
+                    render();
+                });
+            }
+        });
+    }
     private JSONObject publicJson(String location) throws Exception {HttpsURLConnection c=(HttpsURLConnection)new URL(location).openConnection();c.setConnectTimeout(10000);c.setReadTimeout(15000);c.setRequestProperty("User-Agent","BionicPocket");try{if(c.getResponseCode()!=200)throw new IOException("Обновления недоступны");return new JSONObject(read(c.getInputStream(),100000));}finally{c.disconnect();}}
     private void checkUpdate(boolean visible){io.execute(()->{try{JSONObject manifest=publicJson("https://github.com/"+REPO+"/releases/latest/download/update.json");int installed=getPackageManager().getPackageInfo(getPackageName(),0).versionCode;prefs.edit().putLong("updateCheck",System.currentTimeMillis()).apply();if(manifest.getInt("versionCode")<=installed){if(visible)main.post(()->toast("Установлена последняя версия"));return;}main.post(()->new AlertDialog.Builder(this).setTitle("Доступна версия "+manifest.optString("versionName")).setMessage("Скачать обновление? Подпись приложения и SHA-256 будут проверены перед установкой.").setPositiveButton("Скачать",(d,n)->download(manifest)).setNegativeButton("Позже",null).show());}catch(Exception e){if(visible)main.post(()->toast("Не удалось проверить обновления. Повторите позже."));}});}
     private void download(JSONObject manifest){toast("Скачиваю обновление…");io.execute(()->{try{String location=manifest.getString("url");if(!location.startsWith("https://github.com/"+REPO+"/releases/download/"))throw new IOException("Неизвестный источник обновления");String expected=manifest.getString("sha256");if(!expected.matches("[0-9a-f]{64}"))throw new IOException("Некорректная контрольная сумма");HttpsURLConnection c=(HttpsURLConnection)new URL(location).openConnection();c.setConnectTimeout(15000);c.setReadTimeout(30000);File target=new File(getCacheDir(),"update.apk");MessageDigest digest=MessageDigest.getInstance("SHA-256");long total=0;try{if(c.getResponseCode()!=200)throw new IOException("Ошибка скачивания");try(InputStream in=c.getInputStream();OutputStream out=new FileOutputStream(target)){byte[] buf=new byte[32768];int n;while((n=in.read(buf))!=-1){total+=n;if(total>50000000)throw new IOException("Файл обновления слишком большой");digest.update(buf,0,n);out.write(buf,0,n);}}}finally{c.disconnect();}StringBuilder hex=new StringBuilder();for(byte b:digest.digest())hex.append(String.format(Locale.ROOT,"%02x",b&255));if(!expected.equals(hex.toString())||total!=manifest.getLong("size"))throw new IOException("Контрольная сумма не совпала");verifyPackage(target);main.post(()->installUpdate());}catch(Exception e){new File(getCacheDir(),"update.apk").delete();main.post(()->toast("Обновление не установлено: "+e.getMessage()));}});}

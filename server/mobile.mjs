@@ -3,6 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createJobSlots, createSubmissionGate } from './scheduling.mjs';
 import { createWebAccess, WEB_TOOLS } from './web.mjs';
+import { createModelLoader } from './model-loader.mjs';
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 async function readJson(file) { return JSON.parse(await fs.readFile(file, 'utf8')); }
@@ -15,6 +16,7 @@ async function writeJson(file, value) {
 export async function createMobile(config, storage, options = {}) {
   const fetcher = options.fetch ?? fetch;
   const web = options.web ?? createWebAccess();
+  const ensureModel=options.ensureModel??createModelLoader(config,fetcher);
   const slots = options.slots ?? createJobSlots(config.maxConcurrentTasks ?? 2);
   const projects = config.mobileWorkspaces ?? Object.fromEntries(Object.keys(config.workspaces).map(id => [id, id]));
   for (const [id, target] of Object.entries(projects)) {
@@ -71,16 +73,7 @@ export async function createMobile(config, storage, options = {}) {
   async function chat(job, input, release) {
     try {
       const modelBase = config.modelBaseUrl.replace(/\/$/, '');
-      if (config.loadProfiles?.[config.model]) {
-        const inventoryResponse = await fetcher(`${modelBase}/api/v1/models`, { redirect: 'error', signal: AbortSignal.timeout(10000) });
-        if (!inventoryResponse.ok) throw Error('Не удалось проверить локальную модель');
-        const model = (await inventoryResponse.json()).models?.find(item => item.key === config.model);
-        if (!model) throw Error('Локальная модель не установлена');
-        if (!model.loaded_instances?.length) {
-          const loaded = await fetcher(`${modelBase}/api/v1/models/load`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(180000), body: JSON.stringify({ model: config.model, ...config.loadProfiles[config.model] }) });
-          if (!loaded.ok) throw Error('Не удалось загрузить модель. Проверьте Bionic на ПК.');
-        }
-      }
+      await ensureModel(config.model);
       let project = '';
       if (input.workspaceId) {
         const workspace = config.workspaces[input.workspaceId];
