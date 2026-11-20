@@ -21,10 +21,38 @@ public final class MessageSyncService extends Service {
     private final Handler main=new Handler(Looper.getMainLooper());
     private volatile boolean stopped;
     public IBinder onBind(Intent i){return null;}
-    public void onCreate(){super.onCreate();startForeground(1,MessageNotifications.ongoing(this));io.scheduleWithFixedDelay(()->check(this,main,()->stopped),0,15,TimeUnit.SECONDS);}
+    public void onCreate(){super.onCreate();startForeground(1,MessageNotifications.ongoing(this));io.scheduleWithFixedDelay(this::syncPending,0,15,TimeUnit.SECONDS);}
     public int onStartCommand(Intent i,int flags,int startId){return START_NOT_STICKY;}
     public void onTimeout(int startId,int type){stopSelf();}
-    public void onDestroy(){stopped=true;io.shutdownNow();super.onDestroy();}
+    public void onDestroy(){stopped=true;io.shutdownNow();stopForeground(STOP_FOREGROUND_REMOVE);super.onDestroy();}
+    static boolean hasPending(JSONArray chats){
+        for(int i=0;i<chats.length();i++){
+            JSONObject chat=chats.optJSONObject(i);if(chat==null)continue;
+            JSONArray list=chat.optJSONArray("messages");if(list==null)continue;
+            java.util.Set<String> finished=new java.util.HashSet<>();
+            for(int j=0;j<list.length();j++){
+                JSONObject m=list.optJSONObject(j);if(m==null)continue;
+                String state=m.optString("codexReplyStatus");
+                if("completed".equals(state)||"blocked".equals(state))finished.add(m.optString("codexReplyId"));
+            }
+            for(int j=0;j<list.length();j++){
+                JSONObject m=list.optJSONObject(j);if(m==null||!"assistant".equals(m.optString("role")))continue;
+                if("pending".equals(m.optString("state")))return true;
+                String handoff=m.optString("handoffId"),reply=m.optString("codexReplyId"),state=m.optString("codexReplyStatus");
+                if(!handoff.isEmpty()&&!finished.contains(handoff))return true;
+                if(!reply.isEmpty()&&("received".equals(state)||"in_progress".equals(state))&&!finished.contains(reply))return true;
+            }
+        }
+        return false;
+    }
+    static boolean hasPending(Context c){
+        try{return hasPending(new JSONArray(c.getSharedPreferences("private",MODE_PRIVATE).getString("chats","[]")));}
+        catch(Exception error){return false;}
+    }
+    private void syncPending(){
+        if(MessageNotifications.visible||!hasPending(this)){main.post(this::stopSelf);return;}
+        check(this,main,()->stopped);
+    }
     interface Cancelled {boolean get();}
     static void schedule(Context c){
         JobInfo j=new JobInfo.Builder(7308,new ComponentName(c,MessageSyncJob.class)).setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY).setPeriodic(15*60*1000L).build();

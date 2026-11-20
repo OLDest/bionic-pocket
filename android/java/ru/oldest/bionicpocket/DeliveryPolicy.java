@@ -32,6 +32,13 @@ public class DeliveryPolicy {
     /**
      * Check if a status code is retryable.
      */
+    public static String retryMessage(int statusCode) {
+        if (statusCode == 429) return "Помощник занят (HTTP 429). Повторю проверку этого запроса.";
+        if (statusCode == 408 || statusCode == 504) return "Сервер не ответил вовремя (HTTP " + statusCode + "). Повторю проверку этого запроса.";
+        if (statusCode >= 500 && statusCode <= 599) return "Ошибка сервера (HTTP " + statusCode + "). Повторю проверку этого запроса.";
+        return "Соединение прервано. Проверю, принят ли этот запрос, после восстановления связи.";
+    }
+
     public static boolean isRetryable(int statusCode) {
         return RETRYABLE_CODES.contains(statusCode);
     }

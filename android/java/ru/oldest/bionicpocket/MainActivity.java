@@ -41,13 +41,16 @@ public final class MainActivity extends Activity {
     private TextView status, title;
     private ScrollView scroll;
     private EditText input, fileInput;
-    private Spinner projectPicker, modePicker, assistantPicker;
+    private Spinner projectPicker, modePicker, assistantPicker, modelPicker;
     private CheckBox readOnly;
     private Button send;
     private boolean foreground, rendering, pendingInstall, importingAttachment, repliesTurn;
     private int replyChatIndex;
     private String server, token="", pollError="";
-    private final Map<String,JSONArray> assistantProjects=new HashMap<>();
+    private final Map<String,JSONArray> assistantProjects=new HashMap<>(), assistantModels=new HashMap<>();
+    private final Map<String,String> assistantModelOrigins=new HashMap<>();
+    private final ArrayList<String> modelIds=new ArrayList<>();
+    private String renderedModelKey="";
     private final Map<String,Integer> activeNetwork=new HashMap<>(), pollCursor=new HashMap<>();
     private long lastCheck;
     private final Runnable tick=new Runnable(){public void run(){if(foreground){if(repliesTurn)pollReplies();else poll();repliesTurn=!repliesTurn;main.postDelayed(this,2500);}}};
@@ -90,7 +93,7 @@ public final class MainActivity extends Activity {
         build(); render(); connect(false);
     }
     @Override public void onResume(){super.onResume();MessageNotifications.visible=true;foreground=true;try{if(activeNetwork.values().stream().allMatch(n->n==0)){String id=current.optString("id");JSONArray restored=new JSONArray(prefs.getString("chats","[]"));for(int i=0;i<restored.length();i++)if(id.equals(restored.optJSONObject(i).optString("id"))){chats=restored;current=chats.optJSONObject(i);break;}}openNotification(getIntent());render();}catch(Exception ignored){}MessageNotifications.channels(this);MessageSyncService.schedule(this);if(Build.VERSION.SDK_INT>=33&&checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=PackageManager.PERMISSION_GRANTED){if(!prefs.getBoolean("notificationAsked",false)){prefs.edit().putBoolean("notificationAsked",true).apply();requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},73);}}else startMessageSync();main.removeCallbacks(tick);main.post(tick);if(pendingInstall&&getPackageManager().canRequestPackageInstalls()){pendingInstall=false;installUpdate();} if(System.currentTimeMillis()-prefs.getLong("updateCheck",0)>86400000L)checkUpdate(false);}
-    @Override public void onPause(){foreground=false;main.removeCallbacks(tick);save();MessageNotifications.visible=false;super.onPause();}
+    @Override public void onPause(){foreground=false;main.removeCallbacks(tick);save();MessageNotifications.visible=false;startMessageSync();super.onPause();}
     /** Stop the activity's independent network and file work lanes. */
     @Override public void onDestroy(){main.removeCallbacks(tick);io.shutdown();officeIo.shutdown();updateIo.shutdown();fileIo.shutdown();super.onDestroy();}
     private int dp(float v){return (int)(v*getResources().getDisplayMetrics().density+.5f);}
@@ -110,6 +113,8 @@ public final class MainActivity extends Activity {
         LinearLayout headText=column();headText.setPadding(dp(12),0,0,0);title=text("Bionic Pocket",21,TEXT);title.setTypeface(null,Typeface.BOLD);headText.addView(title);status=text("Подключение…",12,MUTED);headText.addView(status);header.addView(headText,new LinearLayout.LayoutParams(0,-2,1));header.addView(button("＋",()->newChat(true)),new LinearLayout.LayoutParams(dp(48),dp(48)));root.addView(header);gap(root,12);
         assistantPicker=new Spinner(this);setItems(assistantPicker,new String[]{"Гонец","Домовой · office LAN"});root.addView(assistantPicker);
         assistantPicker.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onNothingSelected(AdapterView<?> p){}public void onItemSelected(AdapterView<?> p,View v,int pos,long id){if(!rendering)selectAssistant(pos==1?AssistantEndpoint.DOMOVOY:AssistantEndpoint.GONETS);}});
+        modelPicker=new Spinner(this);modelPicker.setContentDescription("Модель выбранного помощника");root.addView(modelPicker);
+        modelPicker.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onNothingSelected(AdapterView<?> p){}public void onItemSelected(AdapterView<?> p,View v,int pos,long id){if(rendering||pos!=modelPicker.getSelectedItemPosition()||pos<0||pos>=modelIds.size())return;String model=modelIds.get(pos);if(model!=null&&!model.equals(current.optString("model"))){put(current,"model",model);save();}}});
         LinearLayout selectors=new LinearLayout(this);projectPicker=new Spinner(this);modePicker=new Spinner(this);setItems(projectPicker,new String[]{"Без проекта"});setItems(modePicker,new String[]{"Общение","Задача с файлами"});selectors.addView(projectPicker,new LinearLayout.LayoutParams(0,dp(46),1));selectors.addView(modePicker,new LinearLayout.LayoutParams(0,dp(46),1));root.addView(selectors);
         projectPicker.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onNothingSelected(AdapterView<?> p){}public void onItemSelected(AdapterView<?> p,View v,int pos,long id){if(!rendering){put(current,"project",pos==0?"":projects.optJSONObject(pos-1).optString("id"));save();}}});
         modePicker.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onNothingSelected(AdapterView<?> p){}public void onItemSelected(AdapterView<?> p,View v,int pos,long id){taskOptions.setVisibility(pos==1?View.VISIBLE:View.GONE);}});
@@ -229,7 +234,7 @@ public final class MainActivity extends Activity {
         // An older reply or its status request must not lock the composer.
         // Each submission has its own request ID; capacity is enforced by the API.
         send.setEnabled(true);send.setAlpha(1f);
-        String project=current.optString("project");int selected=0;for(int i=0;i<projects.length();i++)if(project.equals(projects.optJSONObject(i).optString("id")))selected=i+1;projectPicker.setSelection(selected);rendering=false;
+        String project=current.optString("project");int selected=0;for(int i=0;i<projects.length();i++)if(project.equals(projects.optJSONObject(i).optString("id")))selected=i+1;projectPicker.setSelection(selected);renderModels();rendering=false;
         // fullScroll also moves keyboard focus into the transcript. Polling must
         // never take focus (or the IME composing cursor) from either editor.
         if(followBottom)scroll.post(()->scroll.scrollTo(0,Math.max(0,messages.getHeight()-scroll.getHeight())));
@@ -325,11 +330,32 @@ public final class MainActivity extends Activity {
     }
     private static String read(InputStream stream,int limit) throws Exception {if(stream==null)return "";try(InputStream in=stream;ByteArrayOutputStream out=new ByteArrayOutputStream()){byte[] buf=new byte[8192];int n;while((n=in.read(buf))!=-1){if(out.size()+n>limit)throw new IOException("Ответ слишком большой");out.write(buf,0,n);}return out.toString("UTF-8");}}
     /** Fetch metadata for the selected assistant without updating another assistant's visible state. */
+    private JSONArray availableModels(){
+        String assistant=assistantId(current);
+        if(!endpoint(assistant).equals(assistantModelOrigins.get(assistant)))return new JSONArray();
+        JSONArray models=assistantModels.get(assistant);return models==null?new JSONArray():models;
+    }
+    static void pinSelectedModel(JSONObject request,JSONObject chat,JSONArray models){
+        String selected=chat.optString("model");if(selected.isEmpty())return;
+        for(int i=0;i<models.length();i++){JSONObject m=models.optJSONObject(i);if(m!=null&&selected.equals(m.optString("id"))){put(request,"model",selected);return;}}
+        throw new IllegalStateException("Выбранная модель недоступна у этого помощника. Проверьте связь или выберите модель по умолчанию.");
+    }
+    private void renderModels(){
+        if(modelPicker==null)return;
+        JSONArray models=availableModels();String selected=current.optString("model");
+        String key=current.optString("id")+"|"+endpoint(assistantId(current))+"|"+models.toString()+"|"+selected;
+        if(key.equals(renderedModelKey))return;renderedModelKey=key;modelIds.clear();
+        ArrayList<String> labels=new ArrayList<>();labels.add("Модель: по умолчанию");modelIds.add("");int position=0;
+        for(int i=0;i<models.length()&&modelIds.size()<17;i++){JSONObject m=models.optJSONObject(i);if(m==null)continue;String id=m.optString("id");if(id.isEmpty()||modelIds.contains(id))continue;modelIds.add(id);labels.add(m.optString("name",id));if(id.equals(selected))position=modelIds.size()-1;}
+        if(!selected.isEmpty()&&position==0){labels.add("Недоступна: "+selected);modelIds.add(null);position=modelIds.size()-1;}
+        setItems(modelPicker,labels.toArray(new String[0]));modelPicker.setSelection(position);
+    }
     private void connect(boolean visible){
         final String assistant=assistantId(current), origin=endpoint(assistant);
         if(token.isEmpty()||origin.isEmpty()){status.setText(origin.isEmpty()?"Set Domovoy office address in Settings":"Нужен токен · откройте настройки");if(visible)settings();return;}
         status.setText("Проверяю связь…");executor(assistant).execute(()->{try{JSONObject config=apiAt(assistant,origin,"/mobile/config",null);main.post(()->{
             JSONArray available=config.optJSONArray("projects");assistantProjects.put(assistant,available==null?new JSONArray():available);
+            JSONArray choices=config.optJSONArray("models");assistantModels.put(assistant,choices==null?new JSONArray():choices);assistantModelOrigins.put(assistant,origin);
             if(!assistant.equals(assistantId(current))||!origin.equals(endpoint(assistant)))return;
             activateProjects(assistant);render();status.setText("● На связи · "+config.optString("model","Bionic"));if(visible)toast("Подключено");
         });}catch(Exception e){main.post(()->{if(!assistant.equals(assistantId(current))||!origin.equals(endpoint(assistant)))return;status.setText((AssistantEndpoint.DOMOVOY.equals(assistant)?"Domovoy unavailable: ":"Connection failed: ")+e.getMessage());status.setOnClickListener(v->connect(true));if(visible)toast(e.getMessage());});}});
@@ -339,7 +365,7 @@ public final class MainActivity extends Activity {
     /** Prepare a request for this conversation's assistant and keep file-write confirmation explicit. */
     private void send(){String value=input.getText().toString().trim();if(value.isEmpty()){if(draftAttachments().length()==0)return;value="Analyze the attached files.";}if(value.length()>8000){toast("Сообщение слишком длинное (максимум 8000 символов)");return;}if(token.isEmpty()||endpoint(assistantId(current)).isEmpty()){settings();return;}try{
         AssistantEndpoint.validate(assistantId(current),endpoint(assistantId(current)));
-        JSONObject request=new JSONObject();request.put("requestId",UUID.randomUUID().toString());request.put("chatId",current.getString("id"));request.put("text",value);request.put("history",context());request.put("mode",modePicker.getSelectedItemPosition()==1?"task":"chat");String project=current.optString("project");if(!project.isEmpty())request.put("workspaceId",project);
+        JSONObject request=new JSONObject();request.put("requestId",UUID.randomUUID().toString());request.put("chatId",current.getString("id"));request.put("text",value);pinSelectedModel(request,current,availableModels());request.put("history",context());request.put("mode",modePicker.getSelectedItemPosition()==1?"task":"chat");String project=current.optString("project");if(!project.isEmpty())request.put("workspaceId",project);
         if(draftAttachments().length()>0)request.put("attachments",draftAttachments());
         if("task".equals(request.getString("mode"))){if(project.isEmpty()){toast("Выберите проект для задачи");return;}JSONArray files=new JSONArray();for(String f:fileInput.getText().toString().split("[,\\n]")){if(!f.trim().isEmpty())files.put(f.trim().replace('\\','/'));}if(files.length()==0){toast("Укажите файлы задачи");return;}request.put("files",files);request.put("readOnly",readOnly.isChecked());if(!readOnly.isChecked()){new AlertDialog.Builder(this).setTitle("Разрешить изменения?").setMessage("Помощник изменит перечисленные файлы отдельной рабочей копии.\n\n"+files+"\n\nСлияние в main выполняется отдельно.").setPositiveButton("Отправить задачу",(d,n)->submitNew(request)).setNegativeButton("Отмена",null).show();return;}}
         submitNew(request);
@@ -392,7 +418,7 @@ public final class MainActivity extends Activity {
                 main.post(() -> {
                     if (retryable) {
                         put(answer, "state", "pending");
-                        put(answer,"pollError","Нет связи или сервер временно недоступен. Повторная проверка при подключении.");
+                        put(answer,"pollError",DeliveryPolicy.retryMessage(error instanceof ApiException ? ((ApiException)error).status : 0));
                     } else {
                         put(answer, "state", "error");
                         put(answer, "content", detail == null ? "Ошибка отправки" : detail);
@@ -408,7 +434,7 @@ public final class MainActivity extends Activity {
     /** Retry an explicit failed job with a new ID while retaining its original assistant and endpoint. */
     private void retry(JSONObject answer){if(answer.optBoolean("retryNew")){String id=UUID.randomUUID().toString();put(answer,"jobId",id);put(answer.optJSONObject("request"),"requestId",id);put(answer,"retryNew",false);put(answer,"receivedAt",0);put(answer,"sentAt",0);put(answer,"notifiedVersion","");}put(answer,"state","pending");put(answer,"content","");put(answer,"pollError","");submit(answer);}
     /** Apply transport progress while retaining the distinct task outcome shown in the transcript. */
-    static void apply(JSONObject answer,JSONObject job){String state=job.optString("state");long accepted=serverTime(job.optString("createdAt"));if(accepted>0)put(answer,"requestAcceptedAt",accepted);if("completed".equals(state)||"failed".equals(state)){if(answer.optLong("receivedAt",0)==0)put(answer,"receivedAt",System.currentTimeMillis());long sent=serverTime(job.optString("completedAt"));if(sent>0)put(answer,"sentAt",sent);}if("completed".equals(state)){put(answer,"state","completed");put(answer,"content",job.optString("answer","Ответ получен"));put(answer,"taskStatus",job.optString("taskStatus"));}else if("failed".equals(state)){put(answer,"retryNew",true);put(answer,"state","error");put(answer,"content",job.optString("error",job.optString("answer","Задача завершилась с ошибкой")));}else{put(answer,"state","pending");put(answer,"taskId",job.optString("taskId"));put(answer,"content",job.optString("answer"));}}
+    static void apply(JSONObject answer,JSONObject job){String handoff=job.optString("handoffId");if(!handoff.isEmpty())put(answer,"handoffId",handoff);String state=job.optString("state");long accepted=serverTime(job.optString("createdAt"));if(accepted>0)put(answer,"requestAcceptedAt",accepted);if("completed".equals(state)||"failed".equals(state)){if(answer.optLong("receivedAt",0)==0)put(answer,"receivedAt",System.currentTimeMillis());long sent=serverTime(job.optString("completedAt"));if(sent>0)put(answer,"sentAt",sent);}if("completed".equals(state)){put(answer,"state","completed");put(answer,"content",job.optString("answer","Ответ получен"));put(answer,"taskStatus",job.optString("taskStatus"));}else if("failed".equals(state)){put(answer,"retryNew",true);put(answer,"state","error");put(answer,"content",job.optString("error",job.optString("answer","Задача завершилась с ошибкой")));}else{put(answer,"state","pending");put(answer,"taskId",job.optString("taskId"));put(answer,"content",job.optString("answer"));}}
     /** Recover one pending request per assistant in round-robin order across all conversations. */
     private void poll() {
         if (token.isEmpty()) return;
@@ -445,7 +471,7 @@ public final class MainActivity extends Activity {
                 main.post(() -> {
                     if (retryable) {
                         put(answer, "state", "pending");
-                        put(answer,"pollError","Нет связи или сервер временно недоступен. Повторная проверка при подключении.");
+                        put(answer,"pollError",DeliveryPolicy.retryMessage(error instanceof ApiException ? ((ApiException)error).status : 0));
                     } else {
                         put(answer, "state", "error");
                         put(answer, "content", detail == null ? "Ошибка получения ответа" : detail);
@@ -475,7 +501,7 @@ public final class MainActivity extends Activity {
             else if("in_progress".equals(state))prefix="Codex выполняет задачу.\n";
             else if("completed".equals(state))prefix="Результат Codex:\n";
             else if("blocked".equals(state))prefix="Codex: требуется действие.\n";
-            put(message,"state","completed");put(message,"content",prefix+r.optString("message"));put(message,"codexReplyVersion",version);put(message,"receivedAt",System.currentTimeMillis());long sent=serverTime(r.optString("updatedAt",r.optString("createdAt")));if(sent>0)put(message,"sentAt",sent);changed=true;
+            put(message,"state","completed");put(message,"content",prefix+r.optString("message"));put(message,"codexReplyVersion",version);put(message,"codexReplyStatus",state);put(message,"receivedAt",System.currentTimeMillis());long sent=serverTime(r.optString("updatedAt",r.optString("createdAt")));if(sent>0)put(message,"sentAt",sent);changed=true;
         }
         return changed;
     }
@@ -498,7 +524,7 @@ public final class MainActivity extends Activity {
     private void installUpdate(){try{File file=new File(getCacheDir(),"update.apk");verifyPackage(file);if(!getPackageManager().canRequestPackageInstalls()){pendingInstall=true;new AlertDialog.Builder(this).setTitle("Разрешение Android").setMessage("Разрешите Bionic Pocket устанавливать свои обновления. Android всё равно запросит подтверждение установки.").setPositiveButton("Открыть настройки",(d,n)->startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:"+getPackageName())))).setNegativeButton("Позже",(d,n)->pendingInstall=false).show();return;}Intent intent=new Intent(Intent.ACTION_VIEW);intent.setDataAndType(Uri.parse("content://"+getPackageName()+".updates/update.apk"),"application/vnd.android.package-archive");intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);startActivity(intent);}catch(Exception e){toast("Не удалось открыть установщик: "+e.getMessage());}}
     private void toast(String value){Toast.makeText(this,value==null?"Ошибка":value,Toast.LENGTH_LONG).show();}
 
-    private void startMessageSync(){if(token.isEmpty())return;try{startForegroundService(new Intent(this,MessageSyncService.class));}catch(Exception ignored){/* Scheduled job remains available if Android limits the service. */}}
+    private void startMessageSync(){if(token.isEmpty()||MessageNotifications.visible||!MessageSyncService.hasPending(chats)){stopService(new Intent(this,MessageSyncService.class));return;}try{startForegroundService(new Intent(this,MessageSyncService.class));}catch(Exception ignored){/* Scheduled job remains available if Android limits the service. */}}
     @Override public void onRequestPermissionsResult(int code,String[] permissions,int[] results){super.onRequestPermissionsResult(code,permissions,results);if(code==73&&results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)startMessageSync();}
     @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);if(foreground){openNotification(intent);render();save();}}
     private void openNotification(Intent intent){String id=intent.getStringExtra("chatId");if(id==null||id.isEmpty())return;for(int i=0;i<chats.length();i++)if(id.equals(chats.optJSONObject(i).optString("id"))){current=chats.optJSONObject(i);break;}intent.removeExtra("chatId");}
