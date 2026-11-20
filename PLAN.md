@@ -104,3 +104,13 @@ Validation: 34 runtime/mobile tests passed. Live HTTPS mobile chat returned
 verified; no Android device connected for on-device interaction testing.
 YaGo's failed prior lease was reviewed (no application changes) and released;
 future file tasks remain scoped and require separate integration review.
+# Confirmed phone control — 0.1.6
+
+- [x] Coordinator designed hash-locked changes; Bionic applied them in isolated worktree and executed five enforced commands, all exit0.
+- [x] Independently verified all12 report hashes/current source, reviewed diff and reran36 API tests plus actual Java delivery-method tests.
+- [x] Integrated only11 reviewed source/test/utility files; excluded helper report/state and credentials.
+- [x] Runtime17 deployed idle with backup;104 combined runtime tests and real external HTTPS date/status/rules/PowerShell/token checks passed.
+- [x] Separate quiet standing phone inbox ACTIVE every5min; disposable worker mailbox remains separate. Skill updated/validated.
+- [x] Built0.1.6/code7, verified original signing certificate and alignment.
+- [ ] Publish source/APK/update manifest; independently download and verify released artifact.
+- [ ] First genuine future phone handoff confirms actual parent send; queue/restart/route/hash/receipt behavior covered in deterministic tests. No synthetic parent requests sent.

@@ -107,7 +107,7 @@ public final class MainActivity extends Activity {
             LinearLayout bubble=column();bubble.setPadding(dp(14),dp(12),dp(14),dp(12));bubble.setBackground(box(user?0xff294a3a:PANEL,18));
             TextView label=text(user?"Вы":"Bionic",11,user?GREEN:MUTED);label.setTypeface(null,Typeface.BOLD);bubble.addView(label);gap(bubble,5);
             String content=m.optString("content");
-            if("pending".equals(state)){waiting=true;content=m.optString("taskId").isEmpty()?"Готовлю ответ…":"Задача выполняется на ПК…";if(!pollError.isEmpty())content+="\n"+pollError;}
+            if("pending".equals(state)){waiting=true;if(content.isEmpty())content=m.optString("taskId").isEmpty()?"Готовлю ответ…":"Задача выполняется на ПК…";if(!pollError.isEmpty())content+="\n"+pollError;}
             if("error".equals(state))content="Не удалось получить ответ\n"+content;
             TextView body=null;
             if(!user&&"completed".equals(state)){MarkdownView.add(this,bubble,content,TEXT,MUTED,GREEN);}
@@ -200,7 +200,7 @@ public final class MainActivity extends Activity {
         });
     }
     private void retry(JSONObject answer){if(answer.optBoolean("retryNew")){String id=UUID.randomUUID().toString();put(answer,"jobId",id);put(answer.optJSONObject("request"),"requestId",id);put(answer,"retryNew",false);}put(answer,"state","pending");put(answer,"content","");pollError="";submit(answer);}
-    private void apply(JSONObject answer,JSONObject job){String state=job.optString("state");if("completed".equals(state)){put(answer,"state","completed");put(answer,"content",job.optString("answer","Ответ получен"));put(answer,"taskStatus",job.optString("taskStatus"));}else if("failed".equals(state)){put(answer,"retryNew",true);put(answer,"state","error");put(answer,"content",job.optString("error",job.optString("answer","Задача завершилась с ошибкой")));}else{put(answer,"state","pending");put(answer,"taskId",job.optString("taskId"));}}
+    private void apply(JSONObject answer,JSONObject job){String state=job.optString("state");if("completed".equals(state)){put(answer,"state","completed");put(answer,"content",job.optString("answer","Ответ получен"));put(answer,"taskStatus",job.optString("taskStatus"));}else if("failed".equals(state)){put(answer,"retryNew",true);put(answer,"state","error");put(answer,"content",job.optString("error",job.optString("answer","Задача завершилась с ошибкой")));}else{put(answer,"state","pending");put(answer,"taskId",job.optString("taskId"));put(answer,"content",job.optString("answer"));}}
     private void poll() {
         if (networkBusy || token.isEmpty()) return;
         JSONObject target = null;

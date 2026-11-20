@@ -92,6 +92,8 @@ flow=r'''
     f=fixture();f.responses.add(new JSONObject().put("state","failed").put("error","model stopped"));f.poll();expectState(f,"error");
     check(f.answer().optBoolean("retryNew"),"server failure must permit explicit new attempt");
     f.responses.add(done());f.retry(f.answer());expectState(f,"completed");check(!"fixed-id".equals(f.answer().optString("jobId")),"manual failed-job retry must have fresh ID");
+    f=fixture();f.apply(f.answer(),new JSONObject().put("state","running").put("answer","Queued, not yet confirmed"));expectState(f,"pending");check("Queued, not yet confirmed".equals(f.answer().optString("content")),"pending receipt text lost");
+    f.apply(f.answer(),new JSONObject().put("state","completed").put("answer","Receipt confirmed"));expectState(f,"completed");check("Receipt confirmed".equals(f.answer().optString("content")),"confirmed receipt lost");
     System.out.println("PASS: actual submit/poll/retry/apply, offline/404/429/5xx/auth and request-ID recovery");
   }
 '''
