@@ -4,6 +4,6 @@ Scope: Android message notifications and sent/received dates, then publish signe
 - [x] Merge PC-120 assistant/archive/attachment changes; preserve both host routes.
 - [x] Verify delivery, uploads, endpoint policy and notification deduplication on JVM.
 - [x] Build/sign APK with existing release key; rebuild final lifecycle fixes before upload.
-- [ ] Commit, push, publish release, verify public assets.
+- [x] Commit, push, publish v0.1.11, verify all three public assets byte-for-byte.
 Keep phone requests and Codex replies deduplicated. No model calls for checks.
 No Android device connected: runtime permission, notification shade and device sleep remain untested on hardware.
