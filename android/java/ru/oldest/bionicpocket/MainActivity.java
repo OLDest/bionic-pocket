@@ -44,12 +44,12 @@ public final class MainActivity extends Activity {
     private Spinner projectPicker, modePicker, assistantPicker;
     private CheckBox readOnly;
     private Button send;
-    private boolean foreground, rendering, pendingInstall, importingAttachment;
+    private boolean foreground, rendering, pendingInstall, importingAttachment, repliesTurn;
     private String server, token="", pollError="";
     private final Map<String,JSONArray> assistantProjects=new HashMap<>();
     private final Map<String,Integer> activeNetwork=new HashMap<>(), pollCursor=new HashMap<>();
     private long lastCheck;
-    private final Runnable tick=new Runnable(){public void run(){if(foreground){poll();main.postDelayed(this,2500);}}};
+    private final Runnable tick=new Runnable(){public void run(){if(foreground){if(repliesTurn)pollReplies();else poll();repliesTurn=!repliesTurn;main.postDelayed(this,2500);}}};
     /** Restore legacy chats as Gonets chats and retain their original delivery endpoint. */
     @Override public void onCreate(Bundle state){
         super.onCreate(state);
@@ -456,6 +456,36 @@ public final class MainActivity extends Activity {
             }
         });
         }
+    }
+    /** Update the original Codex reply card once per version without duplicating its history entry. */
+    private boolean applyCodexReplies(JSONArray list,JSONArray updates) {
+        boolean changed=false;
+        if(list==null||updates==null)return false;
+        for(int i=0;i<updates.length();i++){
+            JSONObject r=updates.optJSONObject(i);if(r==null)continue;
+            String id=r.optString("handoffId"),version=r.optString("version");if(id.isEmpty()||version.isEmpty())continue;
+            JSONObject message=null;
+            for(int j=0;j<list.length();j++){JSONObject item=list.optJSONObject(j);if(item!=null&&id.equals(item.optString("codexReplyId"))){message=item;break;}}
+            if(message!=null&&version.equals(message.optString("codexReplyVersion")))continue;
+            if(message==null){message=new JSONObject();put(message,"role","assistant");put(message,"codexReplyId",id);list.put(message);}
+            String prefix="Codex: ";String state=r.optString("status");
+            if("received".equals(state))prefix="Codex получил задачу.\n";
+            else if("in_progress".equals(state))prefix="Codex выполняет задачу.\n";
+            else if("completed".equals(state))prefix="Результат Codex:\n";
+            else if("blocked".equals(state))prefix="Codex: требуется действие.\n";
+            put(message,"state","completed");put(message,"content",prefix+r.optString("message"));put(message,"codexReplyVersion",version);changed=true;
+        }
+        return changed;
+    }
+    /** Poll Codex updates through the selected chat's assistant without blocking the other assistant. */
+    private void pollReplies(){
+        if(token.isEmpty())return;
+        final JSONObject chat=current;final String id=chat.optString("id"),assistant=assistantId(chat),origin=endpoint(assistant);
+        if(origin.isEmpty()||activeNetwork.getOrDefault(assistant,0)>0)return;beginNetwork(assistant);
+        executor(assistant).execute(()->{try{
+            JSONObject response=apiAt(assistant,origin,"/mobile/control/replies?chatId="+id,null);
+            main.post(()->{finishNetwork(assistant);if(applyCodexReplies(chat.optJSONArray("messages"),response.optJSONArray("replies"))){save();if(current==chat)render();}});
+        }catch(Exception error){main.post(()->{finishNetwork(assistant);});}});
     }
     private JSONObject publicJson(String location) throws Exception {HttpsURLConnection c=(HttpsURLConnection)new URL(location).openConnection();c.setConnectTimeout(10000);c.setReadTimeout(15000);c.setRequestProperty("User-Agent","BionicPocket");try{if(c.getResponseCode()!=200)throw new IOException("Обновления недоступны");return new JSONObject(read(c.getInputStream(),100000));}finally{c.disconnect();}}
     /** Check release metadata without occupying either assistant's delivery lane. */

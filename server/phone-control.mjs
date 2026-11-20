@@ -70,11 +70,36 @@ export async function createPhoneControl(config,storage,options={}){
   }
   async function getHandoff(id){if(!uuid.test(id))throw Error('Invalid handoff ID');return read(path.join(folder,id+'.json'));}
   async function pending(){await fs.mkdir(folder,{recursive:true});const result=[];for(const name of await fs.readdir(folder)){if(!uuid.test(name.slice(0,-5))||!name.endsWith('.json'))continue;const item=await read(path.join(folder,name));if(item.state==='queued')result.push({...item,sha256:sha(item.request)});}return result.sort((a,b)=>a.createdAt.localeCompare(b.createdAt));}
+  let handoffTail=Promise.resolve();
+  function mutateHandoff(fn){const result=handoffTail.then(fn);handoffTail=result.catch(()=>{});return result;}
   async function acknowledge(id,input){
+    return mutateHandoff(async()=>{
     const item=await getHandoff(id);
     if(input.parentThreadId!==item.request.parentThreadId||input.hostId!==item.request.hostId||input.sha256!==sha(item.request)||typeof input.receipt!=='string'||!input.receipt.trim())throw Error('Receipt does not match trusted handoff route/hash');
     if(item.state!=='delivered'){item.state='delivered';item.delivery={parentThreadId:input.parentThreadId,hostId:input.hostId,receipt:input.receipt,deliveredAt:stamp()};await write(path.join(folder,id+'.json'),item);}
     return {delivered:true,handoffId:id,delivery:item.delivery};
+    });
+  }
+  // Coordinator messages are trusted only through the configured owner/hash route.
+  async function reply(id,input){
+    return mutateHandoff(async()=>{
+    const item=await getHandoff(id);
+    if(input.parentThreadId!==item.request.parentThreadId||input.hostId!==item.request.hostId||input.sha256!==sha(item.request))throw Error('Reply route/hash mismatch');
+    if(!['received','in_progress','completed','blocked'].includes(input.status)||typeof input.message!=='string'||!input.message.trim()||input.message.length>12000)throw Error('Invalid coordinator reply');
+    if(item.reply?.status==='completed'&&input.status!=='completed')throw Error('Completed coordinator task cannot regress');
+    if(item.reply?.status===input.status&&item.reply?.message===input.message)return item.reply;
+    item.reply={handoffId:id,chatId:item.request.sourceChatId,requestId:item.request.sourceRequestId,status:input.status,message:input.message.trim(),version:randomUUID(),updatedAt:stamp()};
+    await write(path.join(folder,id+'.json'),item);return item.reply;
+    });
+  }
+  async function replies(chatId){
+    if(!uuid.test(chatId))throw Error('Invalid chat ID');
+    await fs.mkdir(folder,{recursive:true});const result=[];
+    for(const name of await fs.readdir(folder)){
+      if(!/^[0-9a-f-]{36}\.json$/i.test(name))continue;
+      const item=await read(path.join(folder,name));if(item.request.sourceChatId===chatId&&item.reply)result.push(item.reply);
+    }
+    return result.sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).slice(0,20);
   }
   async function tasks(input){
     const route=owner(input),result=[];const base=path.join(storage,'tasks');
@@ -123,5 +148,5 @@ export async function createPhoneControl(config,storage,options={}){
     if(name==='run_shell')return `Консоль: код завершения ${data.exitCode}.\n${data.stdout??''}${data.stderr?'\n'+data.stderr:''}`.trim();
     return 'Связь с локальным мостом есть. Модель: '+data.model+'. Инструменты интернета доступны; отдельная проверка внешнего соединения сейчас не выполнялась.';
   }
-  return {enabled,rules,execute,render,pending,acknowledge,getHandoff,tools:enabled?PHONE_TOOLS.filter(t=>(!['ask_peer','get_peer_response'].includes(t.function.name)||options.peer?.enabled)&&(t.function.name!=='run_shell'||config.mobileHostShellEnabled&&config.shellEnabled&&!config.mobileLiteralShellOnly)):[]};
+  return {enabled,rules,execute,render,pending,acknowledge,getHandoff,reply,replies,tools:enabled?PHONE_TOOLS.filter(t=>(!['ask_peer','get_peer_response'].includes(t.function.name)||options.peer?.enabled)&&(t.function.name!=='run_shell'||config.mobileHostShellEnabled&&config.shellEnabled&&!config.mobileLiteralShellOnly)):[]};
 }

@@ -5,7 +5,9 @@ RTK = os.environ.get('RTK', r'C:\Users\OLDest\.local\bin\rtk.exe')
 GIT = os.environ.get('GIT', r'C:\Users\OLDest\AppData\Local\hermes\git\cmd\git.exe')
 REPO = 'OLDest/bionic-pocket'
 def credential():
-    p = subprocess.run([RTK, 'proxy', GIT, 'credential', 'fill'], input='protocol=https\nhost=github.com\n\n', text=True, capture_output=True, check=True)
+    """Load only the expected cached account without opening an interactive account selector."""
+    env=os.environ.copy();env.update(GCM_INTERACTIVE='Never',GIT_TERMINAL_PROMPT='0')
+    p = subprocess.run([RTK, 'proxy', GIT, '-c', 'credential.username=OLDest', 'credential', 'fill'], input='protocol=https\nhost=github.com\nusername=OLDest\n\n', text=True, capture_output=True, check=True, env=env)
     values = dict(line.split('=',1) for line in p.stdout.splitlines() if '=' in line)
     token = values.get('password')
     if not token: raise RuntimeError('GitHub credential is unavailable')
@@ -18,6 +20,7 @@ def api(token, route, data=None, method=None, content_type='application/json'):
     req=urllib.request.Request(route if route.startswith('https://') else 'https://api.github.com'+route, data=data, headers=headers, method=method)
     with urllib.request.urlopen(req,timeout=60) as r: return json.load(r)
 def main():
+    """Publish a verified public APK from the exact pushed source commit and reviewed release notes."""
     token=credential()
     user=api(token,'/user')
     if user['login'].lower()!='oldest': raise RuntimeError('Unexpected GitHub account')
@@ -35,7 +38,11 @@ def main():
             if 'assets/personal.json' in apk.namelist(): raise RuntimeError('Refusing to publish a personal APK')
         version=json.loads((ROOT/'version.json').read_text())
         tag='v'+version['name']
-        rel=api(token,'/repos/'+REPO+'/releases',{'tag_name':tag,'name':'Bionic Pocket '+version['name'],'body':'Передача в Codex теперь показывает очередь и подтверждение реальной доставки. Добавлены реальные инструменты статуса задач, даты, RAM и консоли PowerShell/RTK, постоянные правила пользователя и проверка источников с отличием прочитанных страниц от поисковых описаний. Подтверждение доставки не означает выполнение задачи. Проверены API, реальные Java-методы доставки, Android-сборка и подпись APK. Настройки подключения и история сохраняются.','draft':True})
+        notes_file=os.environ.get('BIONIC_RELEASE_NOTES')
+        if not notes_file:raise RuntimeError('Set BIONIC_RELEASE_NOTES to the reviewed release description')
+        target=subprocess.run([RTK,'proxy',GIT,'rev-parse','HEAD'],cwd=ROOT,capture_output=True,text=True,check=True).stdout.strip()
+        if len(target)!=40 or any(c not in '0123456789abcdef' for c in target):raise RuntimeError('Cannot determine exact source commit')
+        rel=api(token,'/repos/'+REPO+'/releases',{'tag_name':tag,'target_commitish':target,'name':'Bionic Pocket '+version['name'],'body':pathlib.Path(notes_file).read_text(encoding='utf-8'),'draft':True})
         try:
             for name in ['BionicPocket.apk','SHA256SUMS.txt','update.json']:
                 file=ROOT/'dist'/name

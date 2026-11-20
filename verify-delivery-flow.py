@@ -192,10 +192,46 @@ upload=r'''
     }finally{if(p.local.exists())p.local.delete();}
   }
 '''
+replies=r'''
+  String token="fixture",lastOrigin="",lastRoute="";int calls,saves;
+  final Map<String,Integer> activeNetwork=new HashMap<>();
+  final JSONObject current=new JSONObject().put("id","reply-chat").put("assistant","domovoy").put("messages",new JSONArray());
+  JSONObject response;
+  static class Handler {
+    // Keep callback order deterministic while exercising the actual reply polling code.
+    void post(Runnable r){r.run();}
+  }
+  final Handler main=new Handler();
+  // Substitute only the UI executor, keeping the production assistant choice intact.
+  Executor executor(String assistant){return Runnable::run;}
+  // Resolve the fixture's chat identity as the application does.
+  String assistantId(JSONObject chat){return chat.optString("assistant");}
+  // Give each assistant a distinct fixture origin to detect cross-profile routing.
+  String endpoint(String assistant){return assistant.equals("domovoy")?"http://192.168.88.1:1236":"https://gonets.invalid";}
+  // Record the production poll's destination while replacing the network response.
+  JSONObject apiAt(String assistant,String origin,String route,JSONObject payload){calls++;lastOrigin=origin;lastRoute=route;return response;}
+  // Preserve actual card changes in the JSON double.
+  void put(JSONObject j,String k,Object v){j.put(k,v);}
+  // Count persistent updates without requiring Android preferences.
+  void save(){saves++;}
+  // Ignore widgets in this delivery-policy probe.
+  void render(){}
+  // Construct a distinct server reply version for the original handoff.
+  static JSONObject update(String version,String status,String text){return new JSONObject().put("handoffId","handoff-one").put("version",version).put("status",status).put("message",text);}
+  // Verify reply routing, deduplication and replacement using the actual merged production methods.
+  public static void main(String[] args){
+    MainReplyProbe p=new MainReplyProbe();p.response=new JSONObject().put("replies",new JSONArray().put(update("one","received","accepted")));p.pollReplies();
+    JSONArray messages=p.current.optJSONArray("messages");check(messages.length()==1,"missing reply card");check(p.lastOrigin.startsWith("http://192.168.88.1"),"office reply went to Gonets");check(p.lastRoute.endsWith("chatId=reply-chat"),"wrong original chat");
+    p.pollReplies();check(messages.length()==1&&p.saves==1,"same reply duplicated or resaved");p.response=new JSONObject().put("replies",new JSONArray().put(update("two","completed","finished")));p.pollReplies();check(messages.length()==1&&messages.optJSONObject(0).optString("content").contains("finished"),"new reply did not update original card");
+    p.current.put("assistant","gonets");p.pollReplies();check(p.lastOrigin.equals("https://gonets.invalid"),"remote reply went to Domovoy");int calls=p.calls;p.activeNetwork.put("gonets",1);p.pollReplies();check(p.calls==calls,"reply poll ignored active network request");
+    System.out.println("PASS: actual Codex reply cards, version deduplication and assistant-specific polling");
+  }
+'''
 out=worker/'build/delivery-verification';out.mkdir(parents=True,exist_ok=True)
 (out/'MainFlowProbe.java').write_text(imports+'public class MainFlowProbe {\n'+json_double+'\n'+exception+'\n'+flow+'\n'+'\n'.join(declaration('    private void '+name+'(') for name in ['submit','poll','retry','apply','beginNetwork','finishNetwork'])+'\n'+declaration('    private JSONObject nextPending(')+'\n}\n',encoding='utf-8')
 (out/'MainApiProbe.java').write_text(imports+'public class MainApiProbe {\n'+json_double+'\n'+exception+'\n'+api+'\n'+declaration('    private JSONObject api(')+'\n'+declaration('    private JSONObject apiFor(')+'\n'+declaration('    private JSONObject apiAt(')+'\n'+declaration('    private static String read(')+'\n}\n',encoding='utf-8')
 (out/'MainUploadProbe.java').write_text(imports+'public class MainUploadProbe {\n'+json_double+'\n'+exception+'\n'+upload+'\n'+declaration('    private void uploadAttachments(')+'\n}\n',encoding='utf-8')
+(out/'MainReplyProbe.java').write_text(imports+'public class MainReplyProbe {\n'+json_double+'\n'+replies+'\n'+declaration('    private boolean applyCodexReplies(')+'\n'+declaration('    private void pollReplies(')+'\n'+declaration('    private void beginNetwork(')+'\n'+declaration('    private void finishNetwork(')+'\n}\n',encoding='utf-8')
 java_home=os.environ.get('JAVA_HOME')
 javac_path=str(pathlib.Path(java_home)/'bin/javac.exe') if java_home else shutil.which('javac')
 java_path=str(pathlib.Path(java_home)/'bin/java.exe') if java_home else shutil.which('java')
@@ -204,9 +240,10 @@ rtk=os.environ.get('RTK',str(pathlib.Path.home()/'.local/bin/rtk.exe'))
 def run(*args):
     """Run a real JVM verification command through the current installation's RTK."""
     subprocess.run([rtk,'proxy',*[str(a) for a in args]],check=True,cwd=worker)
-run(javac_path,'-encoding','UTF-8','-d',out,out/'MainFlowProbe.java',out/'MainApiProbe.java',out/'MainUploadProbe.java',worker/'android/java/ru/oldest/bionicpocket/DeliveryPolicy.java',worker/'android/java/ru/oldest/bionicpocket/AssistantEndpoint.java',worker/'android/test/AssistantEndpointTest.java')
+run(javac_path,'-encoding','UTF-8','-d',out,out/'MainFlowProbe.java',out/'MainApiProbe.java',out/'MainUploadProbe.java',out/'MainReplyProbe.java',worker/'android/java/ru/oldest/bionicpocket/DeliveryPolicy.java',worker/'android/java/ru/oldest/bionicpocket/AssistantEndpoint.java',worker/'android/test/AssistantEndpointTest.java')
 run(java_path,'-cp',out,'MainApiProbe')
 run(java_path,'-cp',out,'MainFlowProbe')
 run(java_path,'-cp',out,'MainUploadProbe')
+run(java_path,'-cp',out,'MainReplyProbe')
 run(java_path,'-cp',out,'AssistantEndpointTest')
 print('Production delivery method checks passed; Android UI/device behavior is outside this JVM harness.')
