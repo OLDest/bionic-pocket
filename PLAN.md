@@ -112,5 +112,5 @@ future file tasks remain scoped and require separate integration review.
 - [x] Runtime17 deployed idle with backup;104 combined runtime tests and real external HTTPS date/status/rules/PowerShell/token checks passed.
 - [x] Separate quiet standing phone inbox ACTIVE every5min; disposable worker mailbox remains separate. Skill updated/validated.
 - [x] Built0.1.6/code7, verified original signing certificate and alignment.
-- [ ] Publish source/APK/update manifest; independently download and verify released artifact.
+- [x] Published source26af849/main and v0.1.6 APK/update manifest; downloaded37334-byte APK matches manifest SHA256 and signed local artifact. Worker review lease released; audit preserved.
 - [ ] First genuine future phone handoff confirms actual parent send; queue/restart/route/hash/receipt behavior covered in deterministic tests. No synthetic parent requests sent.
