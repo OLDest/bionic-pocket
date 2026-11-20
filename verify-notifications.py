@@ -2,13 +2,14 @@
 import pathlib,runpy,subprocess
 root=pathlib.Path(__file__).resolve().parent
 base=runpy.run_path(str(root/'verify-delivery-flow.py'))
+cards=base['declaration']('    static boolean applyCodexReplies(')
 source=(root/'android/java/ru/oldest/bionicpocket/MessageSyncService.java').read_text(encoding='utf-8')
 # Reuse the balanced production-method extractor against this service.
 base['declaration'].__globals__['source']=source
 method=base['declaration']('    private static void update(').replace('MainActivity.','')
 probe=(root/'build/delivery-verification/MainFlowProbe.java').read_text(encoding='utf-8')
 probe=probe.replace('public class MainFlowProbe','public class NotificationProbe').replace('MainFlowProbe','NotificationProbe')
-probe=probe.replace('  static class MessageNotifications {static boolean busy;}', '''  static class MessageNotifications {static boolean busy;static int count;static void received(Context c,String chat,String title,String key,String body){count++;check(chat.equals("chat"),"wrong notification chat");}}
+probe=probe.replace('static class MessageNotifications {static boolean busy;}', '''  static class MessageNotifications {static boolean busy;static int count;static void received(Context c,String chat,String title,String key,String body){count++;check(chat.equals("chat"),"wrong notification chat");}}
   static class Context {}
   static class SharedPreferences {
     String value;SharedPreferences(String v){value=v;}String getString(String k,String fallback){return value;}
@@ -36,7 +37,7 @@ probe=probe[:start]+'''  public static void main(String[] args){
     System.out.println("PASS: production background merge, timestamps, notification dedup and deleted-chat handling");
   }
 '''+probe[end:]
-probe=probe.rsplit('}',1)[0]+method+'\n}\n'
+probe=probe.rsplit('}',1)[0]+cards+'\n'+method+'\n}\n'
 out=root/'build/delivery-verification';(out/'NotificationProbe.java').write_text(probe,encoding='utf-8')
 jdk=next(pathlib.Path('C:/Users/OLDest/Documents/Codex/2026-11-15/go-https-pikabu-ru-story-yandeks/yago/.tools/jdk').glob('jdk-*'))
 rtk='C:/Users/OLDest/.local/bin/rtk.exe'

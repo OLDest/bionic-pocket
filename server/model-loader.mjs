@@ -1,5 +1,6 @@
 import {execFile} from 'node:child_process';
 function execute(command,rtk){return new Promise(resolve=>execFile(rtk??'rtk',['proxy',command.program,...command.args],{windowsHide:true,timeout:120000,maxBuffer:1048576,encoding:'utf8'},(error,stdout,stderr)=>resolve({exitCode:error?error.code??-1:0,stderr,stdout})));}
+// Load only the approved profile and optionally refuse a second local model instance.
 export function createModelLoader(config,fetcher=fetch,options={}){
   const pending=new Map();
   return async function ensureModel(model){
@@ -7,7 +8,8 @@ export function createModelLoader(config,fetcher=fetch,options={}){
     if(pending.has(model))return pending.get(model);
     const work=(async()=>{
       const base=config.modelBaseUrl.replace(/\/$/,'');
-      async function inventory(){const r=await fetcher(base+'/api/v1/models',{redirect:'error',signal:AbortSignal.timeout(10000)});if(!r.ok)throw Error('Local model inventory failed');const m=(await r.json()).models?.find(m=>m.key===model);if(!m)throw Error('Assigned local model is not installed');return m;}
+      // Inspect metadata without generating or automatically loading a second instance under another alias.
+      async function inventory(){const r=await fetcher(base+'/api/v1/models',{redirect:'error',signal:AbortSignal.timeout(10000)});if(!r.ok)throw Error('Local model inventory failed');const models=(await r.json()).models??[];const m=models.find(m=>m.key===model);if(!m)throw Error('Assigned local model is not installed');if(config.singleModelInstance&&(models.some(other=>other!==m&&other.type!=='embedding'&&other.loaded_instances?.length)||m.loaded_instances?.length>1||m.loaded_instances?.some(instance=>instance.id&&instance.id!==model)))throw Error('Another model instance is loaded; no duplicate will be started');return m;}
       let current=await inventory();
       if(!current.loaded_instances?.length){
         const command=config.modelLoadCommands?.[model];

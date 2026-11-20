@@ -13,9 +13,18 @@ RTK=os.environ.get('RTK',r'C:\Users\OLDest\.local\bin\rtk.exe')
 TOOLS=SDK/'build-tools'/'35.0.0'
 PERSONAL='--personal' in sys.argv
 WORK=ROOT/'build'/('personal' if PERSONAL else 'public'); DIST=ROOT/'dist'; LOCAL=ROOT/'.local'
+SIGNING=pathlib.Path(os.environ.get('BIONIC_SIGNING_DIR',str(LOCAL)))
 def run(*args,env=None):
-    subprocess.run([RTK,'proxy',*[str(a) for a in args]],check=True,cwd=ROOT,env=env)
+    """Run installed tools using project-relative arguments supported by Windows Android tools."""
+    values=[]
+    for value in args:
+        if isinstance(value,pathlib.Path):
+            try:value=os.path.relpath(value,ROOT)
+            except ValueError:pass
+        values.append(str(value))
+    subprocess.run([RTK,'proxy',*values],check=True,cwd=ROOT,env=env)
 def main():
+    """Build the requested APK while retaining an explicitly supplied existing release signer."""
     for p in [WORK,DIST,LOCAL,WORK/'generated',WORK/'classes',WORK/'dex']:p.mkdir(parents=True,exist_ok=True)
     version=json.loads((ROOT/'version.json').read_text())
     manifest=(ROOT/'android'/'AndroidManifest.xml').read_text()
@@ -37,8 +46,9 @@ def main():
             if len(personal.get('token',''))<32 or not personal.get('server','').startswith('https://'):raise RuntimeError('Personal connection settings missing')
             apk.writestr('assets/personal.json',json.dumps(personal))
     run(TOOLS/'zipalign.exe','-f','4',unsigned,WORK/'aligned.apk')
-    key=LOCAL/'release.keystore'; password=LOCAL/'keystore-password.txt'
+    key=SIGNING/'release.keystore'; password=SIGNING/'keystore-password.txt'
     if key.exists()!=password.exists():raise RuntimeError('Signing key/password pair incomplete; restore it rather than rotate')
+    if os.environ.get('BIONIC_SIGNING_DIR') and not key.exists():raise RuntimeError('Configured existing signing key is missing; refusing to generate a replacement')
     if not key.exists():
         password.write_text(secrets.token_urlsafe(32),encoding='utf-8')
         run(JDK/'bin'/'keytool.exe','-genkeypair','-noprompt','-keystore',key,'-storepass:file',password,'-keypass:file',password,'-alias','bionic-pocket','-keyalg','RSA','-keysize','3072','-validity','10000','-dname','CN=Bionic Pocket, O=OLDest')

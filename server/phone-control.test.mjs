@@ -5,6 +5,21 @@ import os from 'node:os';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {createPhoneControl,controlIntent} from './phone-control.mjs';
+test('literal-only host console preserves direct human commands but hides arbitrary model shell',async t=>{
+  const f=await fixture(t,{executeShell:async command=>({exitCode:0,stdout:command,stderr:''})});f.config.mobileLiteralShellOnly=true;
+  const control=await createPhoneControl(f.config,f.root,{executeShell:async command=>({exitCode:0,stdout:command,stderr:''})});
+  assert.ok(!control.tools.some(tool=>tool.function.name==='run_shell'));
+  const input={...f.input,text:'Выполни: Get-Location'};
+  assert.equal((await control.execute('run_shell',{command:'Get-Location'},input)).exitCode,0);
+  await assert.rejects(control.execute('run_shell',{command:'Remove-Item data'},input),/exact/);
+});
+test('adding a coordinator route preserves the explicitly configured phone receiver',async t=>{
+  const f=await fixture(t);f.config.routes.pc120={hostId:'local',workspaceIds:['pc120']};f.config.mobileParentThreadId='parent';
+  delete f.input.workspaceId;f.input.text='Передай в Codex: уточнить задачу';
+  const result=await f.control.execute('handoff_to_codex',{},f.input);assert.equal(result.parentThreadId,'parent');
+  f.input={...f.input,requestId:randomUUID(),workspaceId:'pc120'};
+  assert.equal((await f.control.execute('handoff_to_codex',{},f.input)).parentThreadId,'pc120');
+});
 async function fixture(t,extra={}){const root=await fs.mkdtemp(path.join(os.tmpdir(),'phone-control-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));const config={mobileControlEnabled:true,mobileHostShellEnabled:true,shellEnabled:true,mobileTimezone:'Europe/Kaliningrad',model:'nine',loadProfiles:{nine:{context_length:16384}},workspaces:{yago:{path:root}},routes:{parent:{hostId:'local',workspaceIds:['yago']}}};return {root,config,control:await createPhoneControl(config,root,extra),input:{requestId:randomUUID(),chatId:randomUUID(),workspaceId:'yago',text:'Статус задач',history:[]}};}
 test('phone Russian operational intents route to actual tools, not a stale model topic',()=>{
   for(const [text,name] of [['Согласуй все с кодексом','handoff_to_codex'],['Статус задач?','get_task_status'],['Что у тебя по ресурсам памяти? Есть еще?','get_host_resources'],['Какой сегодня день?','get_current_time'],['Запомни правило: не придумывай ответ','save_rule'],['Выполни: Get-Location','run_shell']])assert.equal(controlIntent(text)?.name,name,text);
