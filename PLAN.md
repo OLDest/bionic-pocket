@@ -112,7 +112,7 @@ future file tasks remain scoped and require separate integration review.
 - [x] Independently verified actual Java receipt/result card methods, version dedupe and replacement;37 server tests passed.
 - [x] Mirrored only coordinator reply API/serialization into standalone server; preserved unrelated live peer changes.
 - [x] Built0.1.7/code8 and verified existing signing certificate, APK signature and alignment.
-- [ ] Publish source and release; verify downloaded APK matches signed local artifact.
+- [x] Published source a5b4723/main and release v0.1.7; downloaded41430-byte APK matches SHA256/size and signed local artifact. Original signing certificate retained; worker lease released, audit preserved.
 
 
 - [x] Coordinator designed hash-locked changes; Bionic applied them in isolated worktree and executed five enforced commands, all exit0.
