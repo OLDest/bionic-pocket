@@ -41,7 +41,9 @@ static class JSONObject {
   String optString(String k){return optString(k,"");}
   String optString(String k,String fallback){Object v=data.get(k);return v==null?fallback:String.valueOf(v);}
   String getString(String k){if(!data.containsKey(k))throw new IllegalArgumentException(k);return optString(k);}
+  long optLong(String k,long fallback){Object v=data.get(k);return v instanceof Number?((Number)v).longValue():fallback;}
   boolean optBoolean(String k){return Boolean.TRUE.equals(data.get(k));}
+  JSONArray optJSONArray(String k){return (JSONArray)data.get(k);}
   JSONObject optJSONObject(String k){return (JSONObject)data.get(k);}
   public String toString(){return data.toString();}
 }
@@ -54,17 +56,21 @@ static class JSONArray {
 static void check(boolean ok,String why){if(!ok)throw new AssertionError(why);}
 '''
 flow=r'''
+  static class MessageNotifications {static boolean busy;}
+  void notifyReceived(){}
+  static long serverTime(String value){try{return java.time.Instant.parse(value).toEpochMilli();}catch(Exception e){return 0;}}
   boolean networkBusy; String token="fixture",pollError="";
   final Executor io=Runnable::run;
   static class Handler {void post(Runnable r){r.run();}}
   final Handler main=new Handler();
   final JSONArray messages=new JSONArray();
+  final JSONArray chats=new JSONArray().put(new JSONObject().put("messages",messages));
   final Deque<Object> responses=new ArrayDeque<>();
   static class Call {String route;JSONObject payload;Call(String r,JSONObject p){route=r;payload=p;}}
   final List<Call> calls=new ArrayList<>();
   int saves,renders;
   JSONArray entries(){return messages;} void render(){renders++;} void save(){saves++;}
-  void put(JSONObject j,String k,Object v){j.put(k,v);}
+  static void put(JSONObject j,String k,Object v){j.put(k,v);}
   JSONObject api(String route,JSONObject payload)throws Exception {
     calls.add(new Call(route,payload));Object next=responses.removeFirst();
     if(next instanceof Exception)throw (Exception)next;return (JSONObject)next;
@@ -98,6 +104,10 @@ flow=r'''
     check(f.applyCodexReplies(f.messages,updates),"receipt not applied");check(f.messages.length()==2,"receipt missing");check(f.messages.optJSONObject(1).optString("content").contains("Receipt from actual Codex"),"receipt text lost");
     check(!f.applyCodexReplies(f.messages,updates)&&f.messages.length()==2,"duplicate reply created another message");reply.put("version","two").put("status","completed").put("message","Actual result with checks");
     check(f.applyCodexReplies(f.messages,updates)&&f.messages.length()==2,"result must update same card");check(f.messages.optJSONObject(1).optString("content").contains("Actual result with checks"),"final result lost");
+    f=fixture();f.apply(f.answer(),new JSONObject().put("state","completed").put("answer","dated").put("createdAt","2026-11-20T12:00:00Z").put("completedAt","2026-11-20T12:01:00Z"));
+    long received=f.answer().optLong("receivedAt",0);check(received>0,"missing receive time");check(f.answer().optLong("sentAt",0)==java.time.Instant.parse("2026-11-20T12:01:00Z").toEpochMilli(),"wrong server send time");
+    f.apply(f.answer(),new JSONObject().put("state","completed").put("answer","dated"));check(f.answer().optLong("receivedAt",0)==received,"duplicate changed receive time");
+    check(f.answer().optLong("requestAcceptedAt",0)>0,"missing server acceptance time");
     System.out.println("PASS: actual submit/poll/retry/apply, offline/404/429/5xx/auth and request-ID recovery");
   }
 '''
@@ -123,7 +133,7 @@ api=r'''
   }
 '''
 out=worker/'build/delivery-verification';out.mkdir(parents=True,exist_ok=True)
-(out/'MainFlowProbe.java').write_text(imports+'public class MainFlowProbe {\n'+json_double+'\n'+exception+'\n'+flow+'\n'+'\n'.join(declaration(('    private boolean ' if name=='applyCodexReplies' else '    private void ')+name+'(') for name in ['submit','poll','retry','apply','applyCodexReplies'])+'\n}\n',encoding='utf-8')
+(out/'MainFlowProbe.java').write_text(imports+'public class MainFlowProbe {\n'+json_double+'\n'+exception+'\n'+flow+'\n'+'\n'.join(declaration(('    static boolean ' if name=='applyCodexReplies' else '    static void ' if name=='apply' else '    private void ')+name+'(') for name in ['submit','poll','retry','apply','applyCodexReplies'])+'\n}\n',encoding='utf-8')
 (out/'MainApiProbe.java').write_text(imports+'public class MainApiProbe {\n'+json_double+'\n'+exception+'\n'+api+'\n'+declaration('    private JSONObject api(')+'\n'+declaration('    private static String read(')+'\n}\n',encoding='utf-8')
 tools=pathlib.Path('C:/Users/OLDest/Documents/Codex/2026-11-15/go-https-pikabu-ru-story-yandeks/yago/.tools')
 jdk=pathlib.Path(os.environ['JAVA_HOME']) if os.environ.get('JAVA_HOME') else next((tools/'jdk').glob('jdk-*'))

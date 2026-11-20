@@ -41,6 +41,7 @@ public final class MainActivity extends Activity {
     private CheckBox readOnly;
     private Button send;
     private boolean foreground, networkBusy, rendering, pendingInstall, repliesTurn;
+    private int replyChatIndex;
     private String server, token="", pollError="";
     private long lastCheck;
     private final Runnable tick=new Runnable(){public void run(){if(foreground){if(repliesTurn)pollReplies();else poll();repliesTurn=!repliesTurn;main.postDelayed(this,2500);}}};
@@ -67,8 +68,12 @@ public final class MainActivity extends Activity {
         if(current==null)newChat(false);
         build(); render(); connect(false);
     }
-    @Override public void onResume(){super.onResume();foreground=true;main.removeCallbacks(tick);main.post(tick);if(pendingInstall&&getPackageManager().canRequestPackageInstalls()){pendingInstall=false;installUpdate();} if(System.currentTimeMillis()-prefs.getLong("updateCheck",0)>86400000L)checkUpdate(false);}
-    @Override public void onPause(){foreground=false;main.removeCallbacks(tick);save();super.onPause();}
+    @Override public void onResume(){super.onResume();MessageNotifications.visible=true;foreground=true;try{if(!networkBusy){String id=current.optString("id");JSONArray restored=new JSONArray(prefs.getString("chats","[]"));for(int i=0;i<restored.length();i++)if(id.equals(restored.optJSONObject(i).optString("id"))){chats=restored;current=chats.optJSONObject(i);break;}}openNotification(getIntent());render();}catch(Exception ignored){}MessageNotifications.channels(this);MessageSyncService.schedule(this);if(Build.VERSION.SDK_INT>=33&&checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=PackageManager.PERMISSION_GRANTED){if(!prefs.getBoolean("notificationAsked",false)){prefs.edit().putBoolean("notificationAsked",true).apply();requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},73);}}else startMessageSync();main.removeCallbacks(tick);main.post(tick);if(pendingInstall&&getPackageManager().canRequestPackageInstalls()){pendingInstall=false;installUpdate();} if(System.currentTimeMillis()-prefs.getLong("updateCheck",0)>86400000L)checkUpdate(false);}
+    @Override public void onPause(){foreground=false;main.removeCallbacks(tick);save();MessageNotifications.visible=false;super.onPause();}
+    private void startMessageSync(){if(token.isEmpty())return;try{startForegroundService(new Intent(this,MessageSyncService.class));}catch(Exception ignored){/* Scheduled job remains available if Android limits the service. */}}
+    @Override public void onRequestPermissionsResult(int code,String[] permissions,int[] results){super.onRequestPermissionsResult(code,permissions,results);if(code==73&&results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)startMessageSync();}
+    @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);openNotification(intent);render();save();}
+    private void openNotification(Intent intent){String id=intent.getStringExtra("chatId");if(id==null||id.isEmpty())return;for(int i=0;i<chats.length();i++)if(id.equals(chats.optJSONObject(i).optString("id"))){current=chats.optJSONObject(i);break;}intent.removeExtra("chatId");}
     @Override public void onDestroy(){main.removeCallbacksAndMessages(null);io.shutdown();super.onDestroy();}
     private int dp(float v){return (int)(v*getResources().getDisplayMetrics().density+.5f);}
     private GradientDrawable box(int color,int radius){GradientDrawable b=new GradientDrawable();b.setColor(color);b.setCornerRadius(dp(radius));return b;}
@@ -93,7 +98,9 @@ public final class MainActivity extends Activity {
         TextView footer=text("Локальный Bionic · ответы сохраняются",11,MUTED);footer.setGravity(Gravity.CENTER);footer.setPadding(0,dp(8),0,0);root.addView(footer);setContentView(root);
     }
     private void setItems(Spinner spinner,String[] items){ArrayAdapter<String> a=new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,items){public View getView(int p,View v,android.view.ViewGroup parent){TextView t=(TextView)super.getView(p,v,parent);t.setTextColor(TEXT);t.setTextSize(13);return t;}};spinner.setAdapter(a);}
-    private void put(JSONObject j,String k,Object v){try{j.put(k,v);}catch(JSONException e){throw new IllegalArgumentException(e);}}
+    private static void put(JSONObject j,String k,Object v){try{j.put(k,v);}catch(JSONException e){throw new IllegalArgumentException(e);}}
+    private static String timeLabel(JSONObject m){StringBuilder s=new StringBuilder();long sent=m.optLong("sentAt",0),received=m.optLong("receivedAt",0);java.text.DateFormat f=new java.text.SimpleDateFormat("dd.MM.yyyy HH:mm:ss",Locale.getDefault());if(sent>0)s.append("Отправлено: ").append(f.format(new Date(sent)));if(received>0){if(s.length()>0)s.append("\n");s.append("Получено: ").append(f.format(new Date(received)));}return s.toString();}
+    private static long serverTime(String value){try{return java.time.Instant.parse(value).toEpochMilli();}catch(Exception e){return 0;}}
     private void save(){if(prefs!=null)prefs.edit().putString("chats",chats.toString()).putString("selected",current.optString("id")).apply();}
     private JSONArray entries(){JSONArray a=current.optJSONArray("messages");if(a==null){a=new JSONArray();put(current,"messages",a);}return a;}
     private void newChat(boolean show){current=new JSONObject();put(current,"id",UUID.randomUUID().toString());put(current,"title","Новый разговор");put(current,"project","");put(current,"messages",new JSONArray());chats.put(current);if(show){input.setText("");render();save();}}
@@ -114,6 +121,7 @@ public final class MainActivity extends Activity {
             else {body=text(content,16,TEXT);body.setTextIsSelectable(true);body.setLineSpacing(dp(3),1);bubble.addView(body);}
             if(!m.optString("taskStatus").isEmpty()){gap(bubble,6);bubble.addView(text("Отчёт: "+m.optString("taskStatus")+" · интеграция отдельно",11,MUTED));}
             if("error".equals(state)){final JSONObject retry=m;bubble.addView(button("Повторить",()->retry(retry)));}
+            if(user&&i+1<list.length()){long accepted=list.optJSONObject(i+1).optLong("requestAcceptedAt",0);if(accepted>0)put(m,"receivedAt",accepted);}String dates=timeLabel(m);if(!dates.isEmpty()){gap(bubble,6);bubble.addView(text(dates,11,MUTED));}
             final String copied=content;View.OnLongClickListener copyMessage=v->{((android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Bionic",copied));toast("Скопировано");return true;};label.setOnLongClickListener(copyMessage);if(body!=null)body.setOnLongClickListener(copyMessage);
             LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-1,-2);bp.topMargin=dp(10);if(user)bp.leftMargin=dp(32);else bp.rightMargin=dp(12);messages.addView(bubble,bp);
         }
@@ -130,7 +138,7 @@ public final class MainActivity extends Activity {
         new AlertDialog.Builder(this).setTitle("Разговоры").setItems(names.toArray(new String[0]),(d,n)->{if(n==0)settings();else{current=chats.optJSONObject(chats.length()-n);input.setText("");pollError="";render();save();}}).setNegativeButton("Закрыть",null).show();
     }
     private void settings(){
-        LinearLayout form=column();form.setPadding(dp(20),dp(8),dp(20),0);form.addView(text("Сервер HTTPS",13,MUTED));EditText url=field(DEFAULT_URL);url.setSingleLine(true);url.setText(server);form.addView(url);gap(form,12);form.addView(text("Токен доступа",13,MUTED));EditText secret=field(token.isEmpty()?"Вставьте токен":"Пустое поле — оставить текущий");secret.setSingleLine(true);secret.setTransformationMethod(PasswordTransformationMethod.getInstance());form.addView(secret);gap(form,12);form.addView(text("Токен шифруется ключом Android Keystore.\nИстория хранится только в приложении.",12,MUTED));gap(form,10);form.addView(button("Проверить обновления",()->checkUpdate(true)));gap(form,8);form.addView(button("Открыть исходный код",()->startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse("https://github.com/"+REPO)))));gap(form,8);form.addView(button("Удалить этот разговор",()->new AlertDialog.Builder(this).setMessage("Удалить разговор с телефона?").setPositiveButton("Удалить",(d,n)->{JSONArray keep=new JSONArray();for(int i=0;i<chats.length();i++)if(chats.optJSONObject(i)!=current)keep.put(chats.optJSONObject(i));chats=keep;newChat(true);}).setNegativeButton("Отмена",null).show()));
+        LinearLayout form=column();form.setPadding(dp(20),dp(8),dp(20),0);form.addView(text("Сервер HTTPS",13,MUTED));EditText url=field(DEFAULT_URL);url.setSingleLine(true);url.setText(server);form.addView(url);gap(form,12);form.addView(text("Токен доступа",13,MUTED));EditText secret=field(token.isEmpty()?"Вставьте токен":"Пустое поле — оставить текущий");secret.setSingleLine(true);secret.setTransformationMethod(PasswordTransformationMethod.getInstance());form.addView(secret);gap(form,12);form.addView(text("Токен шифруется ключом Android Keystore.\nИстория хранится только в приложении.",12,MUTED));gap(form,10);form.addView(button("Уведомления Android",()->startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName()))));gap(form,8);form.addView(text("В фоне: проверка каждые 15 секунд со службой. Если Android остановит службу — периодическая проверка от 15 минут. Время — часовой пояс телефона.",12,MUTED));gap(form,8);form.addView(button("Проверить обновления",()->checkUpdate(true)));gap(form,8);form.addView(button("Открыть исходный код",()->startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse("https://github.com/"+REPO)))));gap(form,8);form.addView(button("Удалить этот разговор",()->new AlertDialog.Builder(this).setMessage("Удалить разговор с телефона?").setPositiveButton("Удалить",(d,n)->{JSONArray keep=new JSONArray();for(int i=0;i<chats.length();i++)if(chats.optJSONObject(i)!=current)keep.put(chats.optJSONObject(i));chats=keep;newChat(true);}).setNegativeButton("Отмена",null).show()));
         ScrollView holder=new ScrollView(this);holder.addView(form);AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Bionic Pocket · "+version()).setView(holder).setPositiveButton("Сохранить",null).setNegativeButton("Отмена",null).create();dialog.setOnShowListener(d->dialog.getButton(-1).setOnClickListener(v->{try{String base=url.getText().toString().trim();URI u=new URI(base);if(!"https".equals(u.getScheme())||u.getHost()==null||u.getUserInfo()!=null||u.getQuery()!=null||u.getFragment()!=null||!(u.getPath().isEmpty()||"/".equals(u.getPath())))throw new Exception("Укажите только HTTPS-адрес сервера без пути");String replacement=secret.getText().toString().trim();if(!replacement.isEmpty())token=replacement;if(token.length()<32)throw new Exception("Вставьте полный токен доступа");server=base.replaceAll("/+$","");prefs.edit().putString("server",server).putString("token",encrypt(token)).apply();dialog.dismiss();connect(true);}catch(Exception e){toast(e.getMessage());}}));dialog.show();
     }
     private String version(){try{return getPackageManager().getPackageInfo(getPackageName(),0).versionName;}catch(Exception e){return "0.1.0";}}
@@ -163,18 +171,18 @@ public final class MainActivity extends Activity {
         if("task".equals(request.getString("mode"))){if(project.isEmpty()){toast("Выберите проект для задачи");return;}JSONArray files=new JSONArray();for(String f:fileInput.getText().toString().split("[,\\n]")){if(!f.trim().isEmpty())files.put(f.trim().replace('\\','/'));}if(files.length()==0){toast("Укажите файлы задачи");return;}request.put("files",files);request.put("readOnly",readOnly.isChecked());if(!readOnly.isChecked()){new AlertDialog.Builder(this).setTitle("Разрешить изменения?").setMessage("Помощник изменит перечисленные файлы отдельной рабочей копии.\n\n"+files+"\n\nСлияние в main выполняется отдельно.").setPositiveButton("Отправить задачу",(d,n)->submitNew(request)).setNegativeButton("Отмена",null).show();return;}}
         submitNew(request);
     }catch(Exception e){toast(e.getMessage());}}
-    private void submitNew(JSONObject request){JSONObject user=new JSONObject();put(user,"role","user");put(user,"state","completed");put(user,"content",request.optString("text"));entries().put(user);JSONObject answer=new JSONObject();put(answer,"role","assistant");put(answer,"state","pending");put(answer,"content","");put(answer,"jobId",request.optString("requestId"));put(answer,"request",request);entries().put(answer);if(entries().length()==2)put(current,"title",request.optString("text").substring(0,Math.min(32,request.optString("text").length())));input.setText("");pollError="";save();render();submit(answer);}
+    private void submitNew(JSONObject request){JSONObject user=new JSONObject();put(user,"sentAt",System.currentTimeMillis());put(user,"role","user");put(user,"state","completed");put(user,"content",request.optString("text"));entries().put(user);JSONObject answer=new JSONObject();put(answer,"role","assistant");put(answer,"state","pending");put(answer,"content","");put(answer,"jobId",request.optString("requestId"));put(answer,"request",request);entries().put(answer);if(entries().length()==2)put(current,"title",request.optString("text").substring(0,Math.min(32,request.optString("text").length())));input.setText("");pollError="";save();render();submit(answer);}
     private void submit(JSONObject answer) {
-        networkBusy = true;
+        networkBusy = true;MessageNotifications.busy=true;
         render();
         final JSONObject request = answer.optJSONObject("request");
         io.execute(() -> {
             try {
                 final JSONObject job = api("/mobile/messages", request);
                 main.post(() -> {
-                    apply(answer, job);
+                    apply(answer, job);notifyReceived();
                     pollError = "";
-                    networkBusy = false;
+                    networkBusy = false;MessageNotifications.busy=false;
                     save();
                     render();
                 });
@@ -192,28 +200,25 @@ public final class MainActivity extends Activity {
                         put(answer, "content", detail == null ? "Ошибка отправки" : detail);
                         pollError = "";
                     }
-                    networkBusy = false;
+                    networkBusy = false;MessageNotifications.busy=false;
                     save();
                     render();
                 });
             }
         });
     }
-    private void retry(JSONObject answer){if(answer.optBoolean("retryNew")){String id=UUID.randomUUID().toString();put(answer,"jobId",id);put(answer.optJSONObject("request"),"requestId",id);put(answer,"retryNew",false);}put(answer,"state","pending");put(answer,"content","");pollError="";submit(answer);}
-    private void apply(JSONObject answer,JSONObject job){String state=job.optString("state");if("completed".equals(state)){put(answer,"state","completed");put(answer,"content",job.optString("answer","Ответ получен"));put(answer,"taskStatus",job.optString("taskStatus"));}else if("failed".equals(state)){put(answer,"retryNew",true);put(answer,"state","error");put(answer,"content",job.optString("error",job.optString("answer","Задача завершилась с ошибкой")));}else{put(answer,"state","pending");put(answer,"taskId",job.optString("taskId"));put(answer,"content",job.optString("answer"));}}
+    private void retry(JSONObject answer){if(answer.optBoolean("retryNew")){String id=UUID.randomUUID().toString();put(answer,"jobId",id);put(answer.optJSONObject("request"),"requestId",id);put(answer,"retryNew",false);put(answer,"receivedAt",0);put(answer,"sentAt",0);put(answer,"notifiedVersion","");}put(answer,"state","pending");put(answer,"content","");pollError="";submit(answer);}
+    static void apply(JSONObject answer,JSONObject job){String state=job.optString("state");long accepted=serverTime(job.optString("createdAt"));if(accepted>0)put(answer,"requestAcceptedAt",accepted);if("completed".equals(state)||"failed".equals(state)){if(answer.optLong("receivedAt",0)==0)put(answer,"receivedAt",System.currentTimeMillis());long sent=serverTime(job.optString("completedAt"));if(sent>0)put(answer,"sentAt",sent);}if("completed".equals(state)){put(answer,"state","completed");put(answer,"content",job.optString("answer","Ответ получен"));put(answer,"taskStatus",job.optString("taskStatus"));}else if("failed".equals(state)){put(answer,"retryNew",true);put(answer,"state","error");put(answer,"content",job.optString("error",job.optString("answer","Задача завершилась с ошибкой")));}else{put(answer,"state","pending");put(answer,"taskId",job.optString("taskId"));put(answer,"content",job.optString("answer"));}}
     private void poll() {
         if (networkBusy || token.isEmpty()) return;
         JSONObject target = null;
-        JSONArray all = entries();
-        for (int i = 0; i < all.length(); i++) {
-            if ("pending".equals(all.optJSONObject(i).optString("state"))) {
-                target = all.optJSONObject(i);
-                break;
-            }
+        for(int c=0;c<chats.length()&&target==null;c++){
+            JSONArray all=chats.optJSONObject(c).optJSONArray("messages");if(all==null)continue;
+            for(int i=0;i<all.length();i++)if("pending".equals(all.optJSONObject(i).optString("state"))){target=all.optJSONObject(i);break;}
         }
         if (target == null) return;
         final JSONObject answer = target;
-        networkBusy = true;
+        networkBusy = true;MessageNotifications.busy=true;
         io.execute(() -> {
             try {
                 JSONObject job;
@@ -227,9 +232,9 @@ public final class MainActivity extends Activity {
                 }
                 final JSONObject response = job;
                 main.post(() -> {
-                    apply(answer, response);
+                    apply(answer, response);notifyReceived();
                     pollError = "";
-                    networkBusy = false;
+                    networkBusy = false;MessageNotifications.busy=false;
                     save();
                     render();
                 });
@@ -247,14 +252,14 @@ public final class MainActivity extends Activity {
                         put(answer, "content", detail == null ? "Ошибка получения ответа" : detail);
                         pollError = "";
                     }
-                    networkBusy = false;
+                    networkBusy = false;MessageNotifications.busy=false;
                     save();
                     render();
                 });
             }
         });
     }
-    private boolean applyCodexReplies(JSONArray list,JSONArray updates) {
+    static boolean applyCodexReplies(JSONArray list,JSONArray updates) {
         boolean changed=false;
         if(list==null||updates==null)return false;
         for(int i=0;i<updates.length();i++){
@@ -269,17 +274,25 @@ public final class MainActivity extends Activity {
             else if("in_progress".equals(state))prefix="Codex выполняет задачу.\n";
             else if("completed".equals(state))prefix="Результат Codex:\n";
             else if("blocked".equals(state))prefix="Codex: требуется действие.\n";
-            put(message,"state","completed");put(message,"content",prefix+r.optString("message"));put(message,"codexReplyVersion",version);changed=true;
+            put(message,"state","completed");put(message,"content",prefix+r.optString("message"));put(message,"codexReplyVersion",version);put(message,"receivedAt",System.currentTimeMillis());long sent=serverTime(r.optString("updatedAt",r.optString("createdAt")));if(sent>0)put(message,"sentAt",sent);changed=true;
         }
         return changed;
     }
+    private void notifyReceived(){
+        for(int i=0;i<chats.length();i++){JSONObject chat=chats.optJSONObject(i);JSONArray list=chat.optJSONArray("messages");if(list==null)continue;
+            for(int j=0;j<list.length();j++){JSONObject m=list.optJSONObject(j);if(!"assistant".equals(m.optString("role"))||m.optLong("receivedAt",0)==0)continue;
+                String key=m.optString("codexReplyId",m.optString("jobId")),version=m.optString("codexReplyVersion",m.optString("state"));
+                if(!version.equals(m.optString("notifiedVersion"))){MessageNotifications.received(this,chat.optString("id"),chat.optString("title","Bionic"),key,m.optString("content"));put(m,"notifiedVersion",version);}
+            }
+        }
+    }
     private void pollReplies(){
-        if(networkBusy||token.isEmpty())return;
-        final JSONObject chat=current;final String id=chat.optString("id");networkBusy=true;
+        if(networkBusy||token.isEmpty()||chats.length()==0)return;
+        final JSONObject chat=chats.optJSONObject((replyChatIndex++)%chats.length());final String id=chat.optString("id");networkBusy=true;MessageNotifications.busy=true;
         io.execute(()->{try{
             JSONObject response=api("/mobile/control/replies?chatId="+id,null);
-            main.post(()->{networkBusy=false;if(applyCodexReplies(chat.optJSONArray("messages"),response.optJSONArray("replies"))){save();if(current==chat)render();}});
-        }catch(Exception error){main.post(()->{networkBusy=false;});}});
+            main.post(()->{networkBusy=false;MessageNotifications.busy=false;if(applyCodexReplies(chat.optJSONArray("messages"),response.optJSONArray("replies"))){notifyReceived();save();if(current==chat)render();}});
+        }catch(Exception error){main.post(()->{networkBusy=false;MessageNotifications.busy=false;});}});
     }
     private JSONObject publicJson(String location) throws Exception {HttpsURLConnection c=(HttpsURLConnection)new URL(location).openConnection();c.setConnectTimeout(10000);c.setReadTimeout(15000);c.setRequestProperty("User-Agent","BionicPocket");try{if(c.getResponseCode()!=200)throw new IOException("Обновления недоступны");return new JSONObject(read(c.getInputStream(),100000));}finally{c.disconnect();}}
     private void checkUpdate(boolean visible){io.execute(()->{try{JSONObject manifest=publicJson("https://github.com/"+REPO+"/releases/latest/download/update.json");int installed=getPackageManager().getPackageInfo(getPackageName(),0).versionCode;prefs.edit().putLong("updateCheck",System.currentTimeMillis()).apply();if(manifest.getInt("versionCode")<=installed){if(visible)main.post(()->toast("Установлена последняя версия"));return;}main.post(()->new AlertDialog.Builder(this).setTitle("Доступна версия "+manifest.optString("versionName")).setMessage("Скачать обновление? Подпись приложения и SHA-256 будут проверены перед установкой.").setPositiveButton("Скачать",(d,n)->download(manifest)).setNegativeButton("Позже",null).show());}catch(Exception e){if(visible)main.post(()->toast("Не удалось проверить обновления. Повторите позже."));}});}
