@@ -2,9 +2,19 @@ import {createHash} from 'node:crypto';
 const stop=new Set('что ты знаешь известно расскажи про об о компания компании компанию ооо ао найди найти поищи проверь проверить официальный официальную сайт сайты интернете интернет актуальная информация информацию пожалуйста цене цены средние напиши покажи latest search official'.split(' '));
 function words(text){return (text.toLocaleLowerCase('ru').match(/[\p{L}\d]{3,}/gu)??[]).filter(w=>!stop.has(w));}
 function translit(text){const a='абвгдеёжзийклмнопрстуфхцчшщыэюя',b=['a','b','v','g','d','e','e','zh','z','i','i','k','l','m','n','o','p','r','s','t','u','f','h','c','ch','sh','sch','y','e','yu','ya'];return text.toLowerCase().replace(/[а-яё]/g,c=>b[a.indexOf(c)]??c).replace(/[ьъ]/g,'');}
+// Honor an explicit request to answer without network research or tools.
+export function withoutTools(text){
+  return /(?:^|[.!?\n])\s*(?:без\s+инструментов|не\s+используй\s+инструменты)(?:[.!:\s]|$)/iu.test(text);
+}
+// Distinguish a network restriction from a prohibition of every tool.
+export function withoutWeb(text){
+  return /(?:^|[.!?\n])\s*(?:без\s+(?:инструментов|поиска|интернета)|не\s+используй\s+(?:инструменты|интернет)|не\s+ищи\s+в\s+интернете)(?:[.!:\s]|$)/iu.test(text);
+}
+// Recognize explicit research intent without matching price words inside other words.
 export function researchRequest(text){
+  if(withoutWeb(text))return null;
   if(/(?:найди|поищи|проверь)[\s\S]{0,50}(?:файл|папк|диск|локальн|в проекте)/i.test(text)&&!/(?:https?:\/\/|интернет|сайт|веб|web)/i.test(text))return null;
-  const explicit=/(?:найди|поищи|погугли|search|look up|проверь\s+(?:сайт|информац)|официальн[\s\S]{0,30}сайт|что[\s\S]{0,20}знаешь[\s\S]{0,30}компан|расскажи[\s\S]{0,25}(?:компан|[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+)|сколько\s+стоит|по\s*ч[её]м|актуальн[\s\S]{0,20}(?:цен|информац))/i.test(text);
+  const explicit=/(?:найди|поищи|погугли|search|look up|проверь\s+(?:сайт|информац)|официальн[\s\S]{0,30}сайт|что[\s\S]{0,20}знаешь[\s\S]{0,30}компан|расскажи[\s\S]{0,25}(?:компан|[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+)|сколько\s+стоит|(?<![\p{L}\p{N}_])по\s*ч[её]м(?![\p{L}\p{N}_])|актуальн[\s\S]{0,20}(?:цен|информац))/iu.test(text);
   if(!explicit)return null;
   const raw=text.match(/https?:\/\/[^\s<>]+|(?<![@\w])(?:www\.)?(?:[a-z0-9][a-z0-9-]*\.)+[a-z]{2,}(?:\/[^\s<>]*)?/i)?.[0]?.replace(/[.,!?;)]+$/,'');
   return {query:text.slice(0,400),url:raw?(raw.startsWith('http')?raw:'https://'+raw):null};

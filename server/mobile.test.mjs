@@ -9,6 +9,27 @@ const config={model:'test',modelBaseUrl:'http://127.0.0.1:1235',port:1236,token:
 async function fixture(t,fetcher,settings=config,options={}){const dir=await fs.mkdtemp(path.join(os.tmpdir(),'bionic-mobile-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));return {dir,mobile:await createMobile(settings,dir,{fetch:fetcher,...options})};}
 async function call(mobile,url,body,busy=false){let output;const handled=await mobile.handle({url,method:body===undefined?'GET':'POST'},body===undefined?'':JSON.stringify(body),(status,value)=>output={status,value},busy);return {handled,...output};}
 const input=()=>({requestId:randomUUID(),chatId:randomUUID(),text:'Привет',mode:'chat',history:[]});
+
+test('ambiguous task admission remains durable and does not submit a second core task',async t=>{
+ let calls=0;const {mobile,dir}=await fixture(t,async()=>{calls++;throw Error('response lost after acceptance');});
+ const task={...input(),mode:'task',workspaceId:'yago',files:['main.go'],readOnly:false};
+ const first=await call(mobile,'/mobile/messages',task);assert.equal(first.status,202);assert.equal(first.value.phase,'task-submission-unknown');
+ assert.equal((await call(mobile,'/mobile/messages',task)).status,200);assert.equal(calls,1);
+ const restarted=await createMobile(config,dir,{fetch:async()=>{throw Error('must not replay');}});
+ assert.equal((await call(restarted,'/mobile/messages',task)).value.phase,'task-submission-unknown');assert.equal(calls,1);
+});
+test('known task capacity rejection permits retry of the same original request',async t=>{
+ let calls=0;const {mobile}=await fixture(t,async()=>{calls++;return calls===1?{ok:false,status:429,json:async()=>({error:'busy'})}:{ok:true,json:async()=>({taskId:randomUUID()})};});
+ const task={...input(),mode:'task',workspaceId:'yago',files:['main.go'],readOnly:true};
+ assert.equal((await call(mobile,'/mobile/messages',task)).status,429);
+ assert.equal((await call(mobile,'/mobile/messages',task)).status,202);assert.equal(calls,2);
+});
+test('explicit no-tools request cannot execute a model-invented web action',async t=>{
+ let turns=0;const {mobile}=await fixture(t,async(_url,options)=>{const body=JSON.parse(options.body);assert.equal(body.tool_choice,'none');assert.equal(body.tools,undefined);return ++turns===1?{ok:true,json:async()=>({choices:[{message:{tool_calls:[{id:'forbidden',function:{name:'web_search',arguments:'{"query":"private"}'}}]}}]})}:{ok:true,json:async()=>({choices:[{message:{content:'Ответ без сети'}}]})};},config,{web:{search:async()=>{throw Error('forbidden web action executed');}}});
+ const message={...input(),text:'Без инструментов. Почему очередь последовательная?'};await call(mobile,'/mobile/messages',message);
+ for(let i=0;i<30&&mobile.isBusy();i++)await new Promise(r=>setTimeout(r,5));
+ assert.equal((await call(mobile,'/mobile/jobs/'+message.requestId)).value.answer,'Ответ без сети');
+});
 test('chat accepts asynchronously, persists answer and deduplicates retry',async t=>{
  const releases=[];let calls=0;const {mobile,dir}=await fixture(t,async(url)=>{assert.equal(url,'http://127.0.0.1:1235/v1/chat/completions');calls++;await new Promise(r=>releases.push(r));return {ok:true,json:async()=>({choices:[{message:{content:'Ответ'}}]})};});
  const message=input();const accepted=await call(mobile,'/mobile/messages',message);assert.equal(accepted.status,202);assert.equal(accepted.value.request,undefined);

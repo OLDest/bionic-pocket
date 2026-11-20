@@ -1,6 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {researchRequest,verifiedResearch} from './research.mjs';
+test('why questions do not trigger price research; explicit price requests still do',()=>{
+  assert.equal(researchRequest('Почему резервную копию полезно проверять восстановлением?'),null);
+  assert.equal(researchRequest('Объясни, почему очередь выполняется последовательно.'),null);
+  assert.ok(researchRequest('Почём ноутбук?'));
+  assert.ok(researchRequest('По чем сейчас SSD?'));
+});
+test('explicit no-web or no-tool instructions prevent automatic research',()=>{
+  assert.equal(researchRequest('Без инструментов. Найди ошибку в приведенном коде.'),null);
+  assert.equal(researchRequest('Не используй интернет. Сколько стоит указанная в примере покупка?'),null);
+  assert.equal(researchRequest('Scope: анализ исходника. Не используй инструменты. Почему код падает?'),null);
+});
 test('explicit website uses actual page read; no invented facts or model needed',async()=>{
   assert.equal(researchRequest('Проверь сайт agbis.ru').url,'https://agbis.ru');let seen;
   const r=await verifiedResearch({read:async url=>{seen=url;return {url,title:'АГБИС',text:'Автоматизация химчисток',truncated:false};},search:async()=>{throw Error('must not search instead of provided URL');}},{text:'Проверь сайт agbis.ru'});
