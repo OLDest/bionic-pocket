@@ -56,6 +56,12 @@ export async function createMobile(config, storage, options = {}) {
     if(job.handoffId){
       const packet=await control.getHandoff(job.handoffId);
       if(packet.request.sourceChatId!==job.chatId||packet.request.sourceRequestId!==job.id)throw Error('Handoff/job route mismatch');
+      if(packet.reply){
+        const r=packet.reply,done=['completed','blocked'].includes(r.status);
+        const prefix={received:'Codex получил задачу.',in_progress:'Codex выполняет задачу.',completed:'Результат Codex:',blocked:'Codex: требуется действие.'}[r.status];
+        const updated={...job,state:done?'completed':'running',phase:'codex-'+r.status,answer:prefix+'\n'+r.message,codexReply:r,...(done?{completedAt:r.updatedAt}:{})};
+        if(JSON.stringify(updated)!==JSON.stringify(job))await writeJson(fileFor(job.id),updated);return updated;
+      }
       const delivered=packet.state==='delivered';
       const updated={...job,state:delivered?'completed':'running',phase:delivered?'handoff-delivered':'handoff-waiting',answer:delivered?'Доставка в Codex подтверждена. ID '+packet.id+'. Решение или выполнение задачи ещё не подтверждено.':'Запрос сохранён в очереди для Codex. Доставка пока не подтверждена. ID '+packet.id,...(delivered?{completedAt:packet.delivery.deliveredAt,delivery:packet.delivery}:{})};
       if(JSON.stringify(updated)!==JSON.stringify(job))await writeJson(fileFor(job.id),updated);
@@ -160,6 +166,9 @@ export async function createMobile(config, storage, options = {}) {
     async handle(req, data, reply, workerBusy) {
       const parsed = new URL(req.url, 'http://localhost');
       if (!parsed.pathname.startsWith('/mobile/')) return false;
+      if(control.enabled&&req.method==='GET'&&parsed.pathname==='/mobile/control/replies'){reply(200,{replies:await control.replies(parsed.searchParams.get('chatId'))});return true;}
+      const coordinatorReply=parsed.pathname.match(/^\/mobile\/control\/handoffs\/([0-9a-f-]{36})\/reply$/i);
+      if(control.enabled&&req.method==='POST'&&coordinatorReply){reply(200,await control.reply(coordinatorReply[1],JSON.parse(data)));return true;}
       if(control.enabled&&req.method==='GET'&&parsed.pathname==='/mobile/control/handoffs/pending'){reply(200,{handoffs:await control.pending()});return true;}
       const receipt=parsed.pathname.match(/^\/mobile\/control\/handoffs\/([0-9a-f-]{36})\/ack$/i);
       if(control.enabled&&req.method==='POST'&&receipt){reply(200,await control.acknowledge(receipt[1],JSON.parse(data)));return true;}

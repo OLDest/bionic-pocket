@@ -40,10 +40,10 @@ public final class MainActivity extends Activity {
     private Spinner projectPicker, modePicker;
     private CheckBox readOnly;
     private Button send;
-    private boolean foreground, networkBusy, rendering, pendingInstall;
+    private boolean foreground, networkBusy, rendering, pendingInstall, repliesTurn;
     private String server, token="", pollError="";
     private long lastCheck;
-    private final Runnable tick=new Runnable(){public void run(){if(foreground){poll();main.postDelayed(this,2500);}}};
+    private final Runnable tick=new Runnable(){public void run(){if(foreground){if(repliesTurn)pollReplies();else poll();repliesTurn=!repliesTurn;main.postDelayed(this,2500);}}};
     @Override public void onCreate(Bundle state){
         super.onCreate(state);
         prefs=getSharedPreferences("private",MODE_PRIVATE);
@@ -253,6 +253,33 @@ public final class MainActivity extends Activity {
                 });
             }
         });
+    }
+    private boolean applyCodexReplies(JSONArray list,JSONArray updates) {
+        boolean changed=false;
+        if(list==null||updates==null)return false;
+        for(int i=0;i<updates.length();i++){
+            JSONObject r=updates.optJSONObject(i);if(r==null)continue;
+            String id=r.optString("handoffId"),version=r.optString("version");if(id.isEmpty()||version.isEmpty())continue;
+            JSONObject message=null;
+            for(int j=0;j<list.length();j++){JSONObject item=list.optJSONObject(j);if(item!=null&&id.equals(item.optString("codexReplyId"))){message=item;break;}}
+            if(message!=null&&version.equals(message.optString("codexReplyVersion")))continue;
+            if(message==null){message=new JSONObject();put(message,"role","assistant");put(message,"codexReplyId",id);list.put(message);}
+            String prefix="Codex: ";String state=r.optString("status");
+            if("received".equals(state))prefix="Codex получил задачу.\n";
+            else if("in_progress".equals(state))prefix="Codex выполняет задачу.\n";
+            else if("completed".equals(state))prefix="Результат Codex:\n";
+            else if("blocked".equals(state))prefix="Codex: требуется действие.\n";
+            put(message,"state","completed");put(message,"content",prefix+r.optString("message"));put(message,"codexReplyVersion",version);changed=true;
+        }
+        return changed;
+    }
+    private void pollReplies(){
+        if(networkBusy||token.isEmpty())return;
+        final JSONObject chat=current;final String id=chat.optString("id");networkBusy=true;
+        io.execute(()->{try{
+            JSONObject response=api("/mobile/control/replies?chatId="+id,null);
+            main.post(()->{networkBusy=false;if(applyCodexReplies(chat.optJSONArray("messages"),response.optJSONArray("replies"))){save();if(current==chat)render();}});
+        }catch(Exception error){main.post(()->{networkBusy=false;});}});
     }
     private JSONObject publicJson(String location) throws Exception {HttpsURLConnection c=(HttpsURLConnection)new URL(location).openConnection();c.setConnectTimeout(10000);c.setReadTimeout(15000);c.setRequestProperty("User-Agent","BionicPocket");try{if(c.getResponseCode()!=200)throw new IOException("Обновления недоступны");return new JSONObject(read(c.getInputStream(),100000));}finally{c.disconnect();}}
     private void checkUpdate(boolean visible){io.execute(()->{try{JSONObject manifest=publicJson("https://github.com/"+REPO+"/releases/latest/download/update.json");int installed=getPackageManager().getPackageInfo(getPackageName(),0).versionCode;prefs.edit().putLong("updateCheck",System.currentTimeMillis()).apply();if(manifest.getInt("versionCode")<=installed){if(visible)main.post(()->toast("Установлена последняя версия"));return;}main.post(()->new AlertDialog.Builder(this).setTitle("Доступна версия "+manifest.optString("versionName")).setMessage("Скачать обновление? Подпись приложения и SHA-256 будут проверены перед установкой.").setPositiveButton("Скачать",(d,n)->download(manifest)).setNegativeButton("Позже",null).show());}catch(Exception e){if(visible)main.post(()->toast("Не удалось проверить обновления. Повторите позже."));}});}

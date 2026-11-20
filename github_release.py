@@ -35,7 +35,7 @@ def main():
             if 'assets/personal.json' in apk.namelist(): raise RuntimeError('Refusing to publish a personal APK')
         version=json.loads((ROOT/'version.json').read_text())
         tag='v'+version['name']
-        rel=api(token,'/repos/'+REPO+'/releases',{'tag_name':tag,'name':'Bionic Pocket '+version['name'],'body':'Передача в Codex теперь показывает очередь и подтверждение реальной доставки. Добавлены реальные инструменты статуса задач, даты, RAM и консоли PowerShell/RTK, постоянные правила пользователя и проверка источников с отличием прочитанных страниц от поисковых описаний. Подтверждение доставки не означает выполнение задачи. Проверены API, реальные Java-методы доставки, Android-сборка и подпись APK. Настройки подключения и история сохраняются.','draft':True})
+        rel=api(token,'/repos/'+REPO+'/releases',{'tag_name':tag,'name':'Bionic Pocket '+version['name'],'body':'Подтверждения получения и результаты Codex возвращаются в исходный телефонный разговор отдельной карточкой, даже если исходное сообщение уже получило статус доставки. Новая версия ответа обновляет ту же карточку без дублей. Проверка ответов выполняется только при открытом приложении, без вызова модели для пустых проверок. Проверены реальные Java-методы получения и обновления карточки, повторная доставка, API, Android-сборка и подпись APK. История и настройки подключения сохраняются.','draft':True})
         try:
             for name in ['BionicPocket.apk','SHA256SUMS.txt','update.json']:
                 file=ROOT/'dist'/name

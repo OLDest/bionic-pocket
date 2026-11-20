@@ -106,6 +106,15 @@ YaGo's failed prior lease was reviewed (no application changes) and released;
 future file tasks remain scoped and require separate integration review.
 # Confirmed phone control — 0.1.6
 
+## Coordinator replies — 0.1.7
+
+- [x] Reviewed Bionic task5d6ee336 actual file hashes and four command results; selected two-file implementation matches coordinator bundle.
+- [x] Independently verified actual Java receipt/result card methods, version dedupe and replacement;37 server tests passed.
+- [x] Mirrored only coordinator reply API/serialization into standalone server; preserved unrelated live peer changes.
+- [x] Built0.1.7/code8 and verified existing signing certificate, APK signature and alignment.
+- [ ] Publish source and release; verify downloaded APK matches signed local artifact.
+
+
 - [x] Coordinator designed hash-locked changes; Bionic applied them in isolated worktree and executed five enforced commands, all exit0.
 - [x] Independently verified all12 report hashes/current source, reviewed diff and reran36 API tests plus actual Java delivery-method tests.
 - [x] Integrated only11 reviewed source/test/utility files; excluded helper report/state and credentials.

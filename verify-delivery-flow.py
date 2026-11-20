@@ -94,6 +94,10 @@ flow=r'''
     f.responses.add(done());f.retry(f.answer());expectState(f,"completed");check(!"fixed-id".equals(f.answer().optString("jobId")),"manual failed-job retry must have fresh ID");
     f=fixture();f.apply(f.answer(),new JSONObject().put("state","running").put("answer","Queued, not yet confirmed"));expectState(f,"pending");check("Queued, not yet confirmed".equals(f.answer().optString("content")),"pending receipt text lost");
     f.apply(f.answer(),new JSONObject().put("state","completed").put("answer","Receipt confirmed"));expectState(f,"completed");check("Receipt confirmed".equals(f.answer().optString("content")),"confirmed receipt lost");
+    f=fixture();JSONArray updates=new JSONArray();JSONObject reply=new JSONObject().put("handoffId","h").put("version","one").put("status","received").put("message","Receipt from actual Codex");updates.put(reply);
+    check(f.applyCodexReplies(f.messages,updates),"receipt not applied");check(f.messages.length()==2,"receipt missing");check(f.messages.optJSONObject(1).optString("content").contains("Receipt from actual Codex"),"receipt text lost");
+    check(!f.applyCodexReplies(f.messages,updates)&&f.messages.length()==2,"duplicate reply created another message");reply.put("version","two").put("status","completed").put("message","Actual result with checks");
+    check(f.applyCodexReplies(f.messages,updates)&&f.messages.length()==2,"result must update same card");check(f.messages.optJSONObject(1).optString("content").contains("Actual result with checks"),"final result lost");
     System.out.println("PASS: actual submit/poll/retry/apply, offline/404/429/5xx/auth and request-ID recovery");
   }
 '''
@@ -119,7 +123,7 @@ api=r'''
   }
 '''
 out=worker/'build/delivery-verification';out.mkdir(parents=True,exist_ok=True)
-(out/'MainFlowProbe.java').write_text(imports+'public class MainFlowProbe {\n'+json_double+'\n'+exception+'\n'+flow+'\n'+'\n'.join(declaration('    private void '+name+'(') for name in ['submit','poll','retry','apply'])+'\n}\n',encoding='utf-8')
+(out/'MainFlowProbe.java').write_text(imports+'public class MainFlowProbe {\n'+json_double+'\n'+exception+'\n'+flow+'\n'+'\n'.join(declaration(('    private boolean ' if name=='applyCodexReplies' else '    private void ')+name+'(') for name in ['submit','poll','retry','apply','applyCodexReplies'])+'\n}\n',encoding='utf-8')
 (out/'MainApiProbe.java').write_text(imports+'public class MainApiProbe {\n'+json_double+'\n'+exception+'\n'+api+'\n'+declaration('    private JSONObject api(')+'\n'+declaration('    private static String read(')+'\n}\n',encoding='utf-8')
 tools=pathlib.Path('C:/Users/OLDest/Documents/Codex/2026-11-15/go-https-pikabu-ru-story-yandeks/yago/.tools')
 jdk=pathlib.Path(os.environ['JAVA_HOME']) if os.environ.get('JAVA_HOME') else next((tools/'jdk').glob('jdk-*'))
