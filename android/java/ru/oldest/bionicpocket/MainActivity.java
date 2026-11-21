@@ -433,8 +433,8 @@ public final class MainActivity extends Activity {
     }
     /** Retry an explicit failed job with a new ID while retaining its original assistant and endpoint. */
     private void retry(JSONObject answer){if(answer.optBoolean("retryNew")){String id=UUID.randomUUID().toString();put(answer,"jobId",id);put(answer.optJSONObject("request"),"requestId",id);put(answer,"retryNew",false);put(answer,"receivedAt",0);put(answer,"sentAt",0);put(answer,"notifiedVersion","");}put(answer,"state","pending");put(answer,"content","");put(answer,"pollError","");submit(answer);}
-    /** Apply transport progress while retaining the distinct task outcome shown in the transcript. */
-    static void apply(JSONObject answer,JSONObject job){String handoff=job.optString("handoffId");if(!handoff.isEmpty())put(answer,"handoffId",handoff);String state=job.optString("state");long accepted=serverTime(job.optString("createdAt"));if(accepted>0)put(answer,"requestAcceptedAt",accepted);if("completed".equals(state)||"failed".equals(state)){if(answer.optLong("receivedAt",0)==0)put(answer,"receivedAt",System.currentTimeMillis());long sent=serverTime(job.optString("completedAt"));if(sent>0)put(answer,"sentAt",sent);}if("completed".equals(state)){put(answer,"state","completed");put(answer,"content",job.optString("answer","Ответ получен"));put(answer,"taskStatus",job.optString("taskStatus"));}else if("failed".equals(state)){put(answer,"retryNew",true);put(answer,"state","error");put(answer,"content",job.optString("error",job.optString("answer","Задача завершилась с ошибкой")));}else{put(answer,"state","pending");put(answer,"taskId",job.optString("taskId"));put(answer,"content",job.optString("answer"));}}
+    /** Merge job and Codex reply identity while preserving upstream handoff timestamps and notification state. */
+    static void apply(JSONObject answer,JSONObject job){JSONObject reply=job.optJSONObject("codexReply");if(reply!=null){String handoff=job.optString("handoffId");if(!handoff.isEmpty())put(answer,"handoffId",handoff);long accepted=serverTime(job.optString("createdAt"));if(accepted>0)put(answer,"requestAcceptedAt",accepted);applyCodexReply(answer,reply);return;}if(!answer.optString("codexReplyId").isEmpty())return;String handoff=job.optString("handoffId");if(!handoff.isEmpty())put(answer,"handoffId",handoff);String state=job.optString("state");long accepted=serverTime(job.optString("createdAt"));if(accepted>0)put(answer,"requestAcceptedAt",accepted);if("completed".equals(state)||"failed".equals(state)){if(answer.optLong("receivedAt",0)==0)put(answer,"receivedAt",System.currentTimeMillis());long sent=serverTime(job.optString("completedAt"));if(sent>0)put(answer,"sentAt",sent);}if("completed".equals(state)){put(answer,"state","completed");put(answer,"content",job.optString("answer","Ответ получен"));put(answer,"taskStatus",job.optString("taskStatus"));}else if("failed".equals(state)){put(answer,"retryNew",true);put(answer,"state","error");put(answer,"content",job.optString("error",job.optString("answer","Задача завершилась с ошибкой")));}else{put(answer,"state","pending");put(answer,"taskId",job.optString("taskId"));put(answer,"content",job.optString("answer"));}}
     /** Recover one pending request per assistant in round-robin order across all conversations. */
     private void poll() {
         if (token.isEmpty()) return;
@@ -485,23 +485,56 @@ public final class MainActivity extends Activity {
         });
         }
     }
-    /** Update the original Codex reply card once per version without duplicating its history entry. */
+    /** Apply one coordinator version without regressing a completed or newer reply. */
+    private static boolean applyCodexReply(JSONObject message,JSONObject reply) {
+        String id=reply.optString("handoffId"),version=reply.optString("version"),state=reply.optString("status");
+        if(id.isEmpty()||version.isEmpty())return false;
+        String previous=message.optString("codexReplyStatus"),updated=reply.optString("updatedAt"),priorTime=message.optString("codexReplyUpdatedAt");
+        if("completed".equals(previous)&&!"completed".equals(state))return false;
+        if(!updated.isEmpty()&&!priorTime.isEmpty()&&updated.compareTo(priorTime)<0)return false;
+        if(id.equals(message.optString("codexReplyId"))&&version.equals(message.optString("codexReplyVersion"))&&state.equals(previous))return false;
+        String prefix="Codex: ";
+        if("received".equals(state))prefix="Codex получил задачу.\n";
+        else if("in_progress".equals(state))prefix="Codex выполняет задачу.\n";
+        else if("completed".equals(state))prefix="Результат Codex:\n";
+        else if("blocked".equals(state))prefix="Codex: требуется действие.\n";
+        boolean pending=!message.optString("jobId").isEmpty()&&("received".equals(state)||"in_progress".equals(state));
+        put(message,"state",pending?"pending":"completed");put(message,"content",prefix+reply.optString("message"));
+        put(message,"codexReplyId",id);put(message,"codexReplyVersion",version);put(message,"codexReplyStatus",state);put(message,"codexReplyUpdatedAt",updated);
+        put(message,"receivedAt",System.currentTimeMillis());long sent=serverTime(reply.optString("updatedAt",reply.optString("createdAt")));if(sent>0)put(message,"sentAt",sent);
+        return true;
+    }
+    /** Merge reply polling into its original request card and remove legacy duplicate cards by identity. */
     static boolean applyCodexReplies(JSONArray list,JSONArray updates) {
         boolean changed=false;
         if(list==null||updates==null)return false;
+        // Heal older saved duplicates even when their reply is outside the server's recent feed.
+        for(int i=list.length()-1;i>=0;i--){
+            JSONObject duplicate=list.optJSONObject(i);if(duplicate==null||!"assistant".equals(duplicate.optString("role")))continue;
+            String id=duplicate.optString("codexReplyId");if(id.isEmpty())continue;
+            JSONObject original=null;
+            for(int k=0;k<list.length();k++){JSONObject item=list.optJSONObject(k);if(item!=null&&item!=duplicate&&"assistant".equals(item.optString("role"))&&id.equals(item.optString("jobId"))){original=item;break;}}
+            if(original==null)continue;
+            if(original.optString("codexReplyId").isEmpty()){
+                put(original,"codexReplyId",id);
+                put(original,"codexReplyVersion",duplicate.optString("codexReplyVersion"));put(original,"codexReplyStatus",duplicate.optString("codexReplyStatus"));put(original,"codexReplyUpdatedAt",duplicate.optString("codexReplyUpdatedAt"));
+                if(!duplicate.optString("notifiedVersion").isEmpty())put(original,"notifiedVersion",duplicate.optString("notifiedVersion"));
+                if("completed".equals(duplicate.optString("codexReplyStatus"))||"blocked".equals(duplicate.optString("codexReplyStatus"))){put(original,"state","completed");put(original,"content",duplicate.optString("content"));}
+                if("pending".equals(original.optString("state"))||original.optString("content").isEmpty())put(original,"content",duplicate.optString("content"));
+            }
+            list.remove(i);changed=true;
+        }
+
         for(int i=0;i<updates.length();i++){
-            JSONObject r=updates.optJSONObject(i);if(r==null)continue;
-            String id=r.optString("handoffId"),version=r.optString("version");if(id.isEmpty()||version.isEmpty())continue;
+            JSONObject reply=updates.optJSONObject(i);if(reply==null)continue;
+            String id=reply.optString("handoffId"),version=reply.optString("version"),request=reply.optString("requestId",id);
+            if(id.isEmpty()||version.isEmpty())continue;
             JSONObject message=null;
-            for(int j=0;j<list.length();j++){JSONObject item=list.optJSONObject(j);if(item!=null&&id.equals(item.optString("codexReplyId"))){message=item;break;}}
-            if(message!=null&&version.equals(message.optString("codexReplyVersion")))continue;
-            if(message==null){message=new JSONObject();put(message,"role","assistant");put(message,"codexReplyId",id);list.put(message);}
-            String prefix="Codex: ";String state=r.optString("status");
-            if("received".equals(state))prefix="Codex получил задачу.\n";
-            else if("in_progress".equals(state))prefix="Codex выполняет задачу.\n";
-            else if("completed".equals(state))prefix="Результат Codex:\n";
-            else if("blocked".equals(state))prefix="Codex: требуется действие.\n";
-            put(message,"state","completed");put(message,"content",prefix+r.optString("message"));put(message,"codexReplyVersion",version);put(message,"codexReplyStatus",state);put(message,"receivedAt",System.currentTimeMillis());long sent=serverTime(r.optString("updatedAt",r.optString("createdAt")));if(sent>0)put(message,"sentAt",sent);changed=true;
+            for(int j=0;j<list.length();j++){JSONObject item=list.optJSONObject(j);if(item!=null&&"assistant".equals(item.optString("role"))&&request.equals(item.optString("jobId"))){message=item;break;}}
+            if(message==null)for(int j=0;j<list.length();j++){JSONObject item=list.optJSONObject(j);if(item!=null&&id.equals(item.optString("codexReplyId"))){message=item;break;}}
+            if(message==null){message=new JSONObject();put(message,"role","assistant");list.put(message);}
+            if(applyCodexReply(message,reply))changed=true;
+            for(int j=list.length()-1;j>=0;j--){JSONObject item=list.optJSONObject(j);if(item!=null&&item!=message&&"assistant".equals(item.optString("role"))&&(id.equals(item.optString("codexReplyId"))||request.equals(item.optString("jobId")))){list.remove(j);changed=true;}}
         }
         return changed;
     }

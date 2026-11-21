@@ -35,6 +35,15 @@ probe=probe[:start]+'''  public static void main(String[] args){
     update(c,prefs,"chat",null,null,replies);check(MessageNotifications.count==2,"duplicate Codex notification");
     replies.optJSONObject(0).put("version","v2").put("message","Result");update(c,prefs,"chat",null,null,replies);check(MessageNotifications.count==3,"updated result not notified");
     update(c,prefs,"deleted-chat",null,null,replies);check(MessageNotifications.count==3,"deleted conversation notified");
+    // Both background channels must share one card and one notification version.
+    JSONObject joined=new JSONObject().put("role","assistant").put("state","pending").put("jobId","joined");messages.put(joined);
+    JSONObject joinedReply=new JSONObject().put("handoffId","joined").put("requestId","joined").put("version","joined-v1").put("status","completed").put("message","one joined result").put("updatedAt","2026-11-21T11:00:00Z");
+    update(c,prefs,"chat","joined",new JSONObject().put("state","completed").put("handoffId","joined").put("codexReply",joinedReply),null);int joinedCount=MessageNotifications.count,joinedSize=messages.length();
+    update(c,prefs,"chat",null,null,new JSONArray().put(joinedReply));check(messages.length()==joinedSize&&MessageNotifications.count==joinedCount,"job/reply paths duplicated the background card or notification");
+    // Migrating an already-notified legacy duplicate must not alert again.
+    messages.put(new JSONObject().put("role","assistant").put("state","completed").put("jobId","legacy").put("content","legacy result").put("receivedAt",1L).put("notifiedVersion","completed"));
+    messages.put(new JSONObject().put("role","assistant").put("state","completed").put("codexReplyId","legacy").put("codexReplyVersion","legacy-v1").put("codexReplyStatus","completed").put("content","legacy result").put("receivedAt",2L).put("notifiedVersion","legacy-v1"));
+    int beforeMigration=MessageNotifications.count,oldSize=messages.length();update(c,prefs,"chat",null,null,new JSONArray());check(messages.length()==oldSize-1&&MessageNotifications.count==beforeMigration,"legacy duplicate cleanup repeated an old notification");
     check(!hasPending(new JSONArray()),"empty queue keeps foreground service");
     JSONObject request=new JSONObject().put("role","assistant").put("state","pending").put("jobId","pending");
     JSONArray pendingMessages=new JSONArray().put(request);
@@ -55,6 +64,4 @@ probe=probe[:start]+'''  public static void main(String[] args){
 '''+probe[end:]
 probe=probe.rsplit('}',1)[0]+cards+'\n'+method+'\n'+policy+'\n}\n'
 out=root/'build/delivery-verification';(out/'NotificationProbe.java').write_text(probe,encoding='utf-8')
-jdk=next(pathlib.Path('C:/Users/OLDest/Documents/Codex/2026-11-15/go-https-pikabu-ru-story-yandeks/yago/.tools/jdk').glob('jdk-*'))
-rtk='C:/Users/OLDest/.local/bin/rtk.exe'
-for args in [[jdk/'bin/javac.exe','-encoding','UTF-8','-cp',out,'-d',out,out/'NotificationProbe.java'],[jdk/'bin/java.exe','-cp',out,'NotificationProbe']]:subprocess.run([rtk,'proxy',*[str(a) for a in args]],cwd=root,check=True)
+for args in [[base['javac_path'],'-encoding','UTF-8','-cp',out,'-d',out,out/'NotificationProbe.java'],[base['java_path'],'-cp',out,'NotificationProbe']]:subprocess.run([base['rtk'],'proxy',*[str(a) for a in args]],cwd=root,check=True)

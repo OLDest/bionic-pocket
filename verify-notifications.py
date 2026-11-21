@@ -39,6 +39,4 @@ probe=probe[:start]+'''  public static void main(String[] args){
 '''+probe[end:]
 probe=probe.rsplit('}',1)[0]+cards+'\n'+method+'\n}\n'
 out=root/'build/delivery-verification';(out/'NotificationProbe.java').write_text(probe,encoding='utf-8')
-jdk=next(pathlib.Path('C:/Users/OLDest/Documents/Codex/2026-11-15/go-https-pikabu-ru-story-yandeks/yago/.tools/jdk').glob('jdk-*'))
-rtk='C:/Users/OLDest/.local/bin/rtk.exe'
-for args in [[jdk/'bin/javac.exe','-encoding','UTF-8','-cp',out,'-d',out,out/'NotificationProbe.java'],[jdk/'bin/java.exe','-cp',out,'NotificationProbe']]:subprocess.run([rtk,'proxy',*[str(a) for a in args]],cwd=root,check=True)
+for args in [[base['javac_path'],'-encoding','UTF-8','-cp',out,'-d',out,out/'NotificationProbe.java'],[base['java_path'],'-cp',out,'NotificationProbe']]:subprocess.run([base['rtk'],'proxy',*[str(a) for a in args]],cwd=root,check=True)

@@ -65,6 +65,8 @@ static class JSONArray {
   JSONArray put(JSONObject v){data.add(v);return this;}
   int length(){return data.size();}
   JSONObject optJSONObject(int i){return data.get(i);}
+  // Match Android JSONArray removal for duplicate-card migration.
+  Object remove(int i){return data.remove(i);}
 }
 static void check(boolean ok,String why){if(!ok)throw new AssertionError(why);}
 '''
@@ -230,14 +232,39 @@ replies=r'''
     JSONArray messages=p.current.optJSONArray("messages");check(messages.length()==1,"missing reply card");check(p.lastOrigin.startsWith("http://192.168.88.1"),"office reply went to Gonets");check(p.lastRoute.endsWith("chatId=reply-chat"),"wrong original chat");
     p.pollReplies();check(messages.length()==1&&p.saves==1,"same reply duplicated or resaved");p.response=new JSONObject().put("replies",new JSONArray().put(update("two","completed","finished")));p.pollReplies();check(messages.length()==1&&messages.optJSONObject(0).optString("content").contains("finished"),"new reply did not update original card");
     p.current.put("assistant","gonets");p.pollReplies();check(p.lastOrigin.equals("https://gonets.invalid"),"remote reply went to Domovoy");int calls=p.calls;p.activeNetwork.put("gonets",1);p.pollReplies();check(p.calls==calls,"reply poll ignored active network request");
+    // Job-first delivery must let reply polling reuse the exact original request card.
+    MainReplyProbe first=new MainReplyProbe();JSONArray firstList=first.current.optJSONArray("messages");
+    JSONObject original=new JSONObject().put("role","assistant").put("jobId","handoff-one").put("state","pending").put("request",new JSONObject().put("requestId","handoff-one"));firstList.put(original);
+    JSONObject completed=update("done","completed","one result").put("updatedAt","2026-11-21T16:00:00Z");
+    first.apply(original,new JSONObject().put("state","completed").put("answer","one result").put("codexReply",completed));
+    first.response=new JSONObject().put("replies",new JSONArray().put(completed));first.pollReplies();
+    check(firstList.length()==1&&firstList.optJSONObject(0)==original,"job-first response duplicated the original card");
+    // Reply-first delivery must remain pending until terminal, and ignore stale job snapshots.
+    MainReplyProbe reverse=new MainReplyProbe();JSONArray reverseList=reverse.current.optJSONArray("messages");JSONObject reverseOriginal=new JSONObject().put("role","assistant").put("jobId","handoff-one").put("state","pending");reverseList.put(reverseOriginal);
+    reverse.response=new JSONObject().put("replies",new JSONArray().put(update("start","received","working")));reverse.pollReplies();check(reverseOriginal.optString("state").equals("pending"),"received reply ended the request early");
+    reverse.response=new JSONObject().put("replies",new JSONArray().put(completed));reverse.pollReplies();reverse.apply(reverseOriginal,new JSONObject().put("state","completed").put("codexReply",completed));
+    reverse.apply(reverseOriginal,new JSONObject().put("state","running").put("answer","stale queued"));reverse.apply(reverseOriginal,new JSONObject().put("state","running").put("codexReply",update("old","in_progress","stale working")));
+    check(reverseList.length()==1&&reverseOriginal.optString("content").contains("one result")&&reverseOriginal.optString("state").equals("completed"),"reply-first completion regressed or duplicated");
+    reverse.apply(reverseOriginal,new JSONObject().put("state","completed").put("codexReply",update("older","completed","obsolete result").put("updatedAt","2026-11-20T16:00:00Z")));check(reverseOriginal.optString("content").contains("one result"),"older completed snapshot replaced newer result");
+    // Heal the already-persisted screenshot case without deleting another request with identical text.
+    MainReplyProbe legacy=new MainReplyProbe();JSONArray legacyList=legacy.current.optJSONArray("messages");JSONObject oldJob=new JSONObject().put("role","assistant").put("jobId","handoff-one").put("state","completed").put("content","one result").put("clientQueuedAt","original-time");
+    legacyList.put(oldJob).put(new JSONObject().put("role","assistant").put("codexReplyId","handoff-one").put("codexReplyVersion","done").put("content","one result")).put(new JSONObject().put("role","assistant").put("jobId","another-request").put("content","one result"));
+    legacy.response=new JSONObject().put("replies",new JSONArray().put(completed));legacy.pollReplies();
+    check(legacyList.length()==2&&legacyList.optJSONObject(0)==oldJob&&legacyList.optJSONObject(1).optString("jobId").equals("another-request"),"legacy duplicate repair removed the wrong request");check(oldJob.optString("clientQueuedAt").equals("original-time"),"migration lost request metadata");check(oldJob.optLong("sentAt",0)>0&&oldJob.optLong("receivedAt",0)>0,"coordinator delivery timestamps missing");
+    int saved=legacy.saves;legacy.pollReplies();check(legacyList.length()==2&&legacy.saves==saved,"repeat poll duplicated or resaved migrated reply");
+    // Old persisted duplicates must heal even after the server's last-20 reply feed no longer contains them.
+    MainReplyProbe archived=new MainReplyProbe();JSONArray archivedList=archived.current.optJSONArray("messages");JSONObject archivedOriginal=new JSONObject().put("role","assistant").put("jobId","older-handoff").put("state","completed").put("content","verified old result");
+    archivedList.put(archivedOriginal).put(new JSONObject().put("role","assistant").put("codexReplyId","older-handoff").put("codexReplyVersion","old-version").put("content","older duplicate"));
+    archived.response=new JSONObject().put("replies",new JSONArray());archived.pollReplies();check(archivedList.length()==1&&archivedList.optJSONObject(0)==archivedOriginal&&archivedOriginal.optString("content").equals("verified old result"),"old duplicate outside recent reply feed was not healed");
+    System.out.println("PASS: job/reply arrival orders, pending/completed semantics, stale snapshots and legacy duplicate repair");
     System.out.println("PASS: actual Codex reply cards, version deduplication and assistant-specific polling");
   }
 '''
 out=worker/'build/delivery-verification';out.mkdir(parents=True,exist_ok=True)
-(out/'MainFlowProbe.java').write_text(imports+'public class MainFlowProbe {\n'+json_double+'\n'+exception+'\n'+flow+'\n'+'\n'.join(declaration(('    static void ' if name=='apply' else '    private void ')+name+'(') for name in ['submit','poll','retry','apply','beginNetwork','finishNetwork'])+'\n'+declaration('    private JSONObject nextPending(')+'\n}\n',encoding='utf-8')
+(out/'MainFlowProbe.java').write_text(imports+'public class MainFlowProbe {\n'+json_double+'\n'+exception+'\n'+flow+'\n'+'\n'.join(declaration(('    static void ' if name=='apply' else '    private void ')+name+'(') for name in ['submit','poll','retry','apply','beginNetwork','finishNetwork'])+'\n'+declaration('    private static boolean applyCodexReply(')+'\n'+declaration('    private JSONObject nextPending(')+'\n}\n',encoding='utf-8')
 (out/'MainApiProbe.java').write_text(imports+'public class MainApiProbe {\n'+json_double+'\n'+exception+'\n'+api+'\n'+declaration('    private JSONObject api(')+'\n'+declaration('    private JSONObject apiFor(')+'\n'+declaration('    private JSONObject apiAt(')+'\n'+declaration('    private static String read(')+'\n}\n',encoding='utf-8')
 (out/'MainUploadProbe.java').write_text(imports+'public class MainUploadProbe {\n'+json_double+'\n'+exception+'\n'+upload+'\n'+declaration('    private void uploadAttachments(')+'\n}\n',encoding='utf-8')
-(out/'MainReplyProbe.java').write_text(imports+'public class MainReplyProbe {\n'+json_double+'\n'+replies+'\n'+declaration('    static boolean applyCodexReplies(')+'\n'+declaration('    private void pollReplies(')+'\n'+declaration('    private void beginNetwork(')+'\n'+declaration('    private void finishNetwork(')+'\n}\n',encoding='utf-8')
+(out/'MainReplyProbe.java').write_text(imports+'public class MainReplyProbe {\n'+json_double+'\n'+replies+'\n'+declaration('    static void apply(')+'\n'+declaration('    private static boolean applyCodexReply(')+'\n'+declaration('    static boolean applyCodexReplies(')+'\n'+declaration('    private void pollReplies(')+'\n'+declaration('    private void beginNetwork(')+'\n'+declaration('    private void finishNetwork(')+'\n}\n',encoding='utf-8')
 java_home=os.environ.get('JAVA_HOME')
 javac_path=str(pathlib.Path(java_home)/'bin/javac.exe') if java_home else shutil.which('javac')
 java_path=str(pathlib.Path(java_home)/'bin/java.exe') if java_home else shutil.which('java')

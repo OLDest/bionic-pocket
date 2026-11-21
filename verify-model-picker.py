@@ -19,5 +19,5 @@ probe=probe[:start]+'''  public static void main(String[] args){
  System.out.println("PASS: production model pinning, assistant isolation, unavailable rejection, immutable pending request and legacy default");
  }'''+probe[end:]
 probe=probe.rsplit('}',1)[0]+method+'\n}\n';(out/'ModelPickerProbe.java').write_text(probe,encoding='utf-8')
-jdk=pathlib.Path(os.environ['JAVA_HOME']);rtk='C:/Users/OLDest/.local/bin/rtk.exe'
+jdk=pathlib.Path(os.environ['JAVA_HOME']);rtk=base['rtk']
 for args in [[jdk/'bin/javac.exe','-encoding','UTF-8','-cp',out,'-d',out,out/'ModelPickerProbe.java'],[jdk/'bin/java.exe','-cp',out,'ModelPickerProbe']]:subprocess.run([rtk,'proxy',*[str(a) for a in args]],cwd=root,check=True)

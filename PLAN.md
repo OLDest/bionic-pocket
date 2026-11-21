@@ -123,3 +123,21 @@ future file tasks remain scoped and require separate integration review.
 - [x] Built0.1.6/code7, verified original signing certificate and alignment.
 - [x] Published source26af849/main and v0.1.6 APK/update manifest; downloaded37334-byte APK matches manifest SHA256 and signed local artifact. Worker review lease released; audit preserved.
 - [ ] First genuine future phone handoff confirms actual parent send; queue/restart/route/hash/receipt behavior covered in deterministic tests. No synthetic parent requests sent.
+
+
+## PC120 — дублирование ответов Codex, 0.1.13
+
+- [x] Причина найдена в двух Android путях: /mobile/jobs обновлял job-карточку, /mobile/control/replies создавал отдельную по codexReplyId.
+- [x] Оба пути объединены по исходным requestId/jobId и handoffId; версии и completed не регрессируют.
+- [x] Старые локальные дубли объединяются при следующем успешном обновлении чата, включая записи вне последних20 серверных ответов. Совпадение текста разных запросов не удаляет сообщения.
+- [x] JVM-проверки настоящих production methods: обе очередности получения, неизменность версии, pending/completed, устаревшие ответы, сохранённая история и независимые помощники — PASS.
+- [x] Персональный APK0.1.13 code14 собран; прежняя подпись, zipalign и токен проверены.
+- [ ] Установка APK и проверка на физическом телефоне: требуется владелец/доступ к устройству.
+
+Логи и APK: ../bionic-pocket-analysis/duplicate-replies-20261121/. Публикация/commit/push не выполнялись.
+
+
+Синхронизация с Git: origin/main d867f0d, версия0.1.12/code13. Исправление перенесено на эту базу; уведомления, фоновая синхронизация, таймстампы и выбор моделей сохранены. JVM verify-delivery-flow.py, verify-notifications.py, verify-pending-notifications.py, verify-model-picker.py завершились exit0. В background-проверках добавлены пересечение job/reply и отсутствие повторного уведомления при миграции старого дубля. Тесты используют фактически установленный JDK/RTK через existing harness, вместо чужих путей OLDest. Финальный APK0.1.13/code14 подписан прежним ключом, совпавшим с реально скачанным опубликованным0.1.12. Предыдущая локальная0.1.11 собрана из устаревшей базы, не является актуальным исправлением. Commit/push/public release не выполнялись.
+
+
+Владелец разрешил публикацию0.1.13 и постоянный порядок: после успешной подписанной сборки и профильных тестов публиковать автоматически. Правило закреплено в AGENTS.md. Для публикации собирается только public APK без личного preset; личный APK остаётся локальным.
