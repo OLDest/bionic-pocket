@@ -9,6 +9,14 @@ import {createJobSlots} from './scheduling.mjs';
 async function fixture(t,extra={}){const root=await fs.mkdtemp(path.join(os.tmpdir(),'mobile-control-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));const config={mobileControlEnabled:true,mobileStrictSources:true,mobileHostShellEnabled:true,shellEnabled:true,mobileTimezone:'Europe/Kaliningrad',model:'nine',modelBaseUrl:'http://127.0.0.1:1235',workspaces:{yago:{path:root,skills:[]}},routes:{parent:{hostId:'local',workspaceIds:['yago']}}};const options={fetch:async()=>{throw Error('Operational request must not call model');},now:()=>Date.parse('2026-11-20T10:00:00Z'),...extra};return {root,config,options,mobile:await createMobile(config,root,options)};}
 async function call(mobile,url,input){let r;await mobile.handle({url,method:input===undefined?'GET':'POST'},input===undefined?'':JSON.stringify(input),(status,value)=>r={status,value},false);return r;}
 const message=text=>({requestId:randomUUID(),chatId:randomUUID(),mode:'chat',workspaceId:'yago',text,history:[]});
+test('Codex task and status headers deterministically queue the exact request without model or peer consultation',async t=>{
+ const f=await fixture(t,{peer:{enabled:true,ask:async()=>{throw Error('Wrong helper');}}});
+ for(const text of ['Задача Кодексу: исправить уведомления','Запроси у Кодекса состояние отправленной задачи по улучшению приложения','Гонец, запроси у Кодекса статус']){
+  const input=message(text);assert.equal((await call(f.mobile,'/mobile/messages',input)).status,202);await settled(f.mobile);
+  const pending=(await call(f.mobile,'/mobile/control/handoffs/pending')).value.handoffs.find(h=>h.id===input.requestId);
+  assert.equal(pending.request.userText,text);assert.equal(pending.request.parentThreadId,'parent');
+ }
+});
 async function settled(m){for(let i=0;i<100&&m.isBusy();i++)await new Promise(r=>setTimeout(r,2));assert.equal(m.isBusy(),false);}
 test('date/status/RAM/rules execute even when both model slots are busy',async t=>{
   const slots=createJobSlots(2),releaseA=slots.acquire('worker'),releaseB=slots.acquire('chat');t.after(()=>{releaseA();releaseB();});const f=await fixture(t,{slots});

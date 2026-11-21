@@ -2,14 +2,14 @@
 import pathlib,runpy,subprocess
 root=pathlib.Path(__file__).resolve().parent
 base=runpy.run_path(str(root/'verify-delivery-flow.py'))
-cards=base['declaration']('    static boolean applyCodexReplies(')
+cards=base['declaration']('    static boolean applyCodexReplies(')+'\n'+base['declaration']('    static boolean claimNotification(')
 source=(root/'android/java/ru/oldest/bionicpocket/MessageSyncService.java').read_text(encoding='utf-8')
 # Reuse the balanced production-method extractor against this service.
 base['declaration'].__globals__['source']=source
 method=base['declaration']('    private static void update(').replace('MainActivity.','')
 probe=(root/'build/delivery-verification/MainFlowProbe.java').read_text(encoding='utf-8')
 probe=probe.replace('public class MainFlowProbe','public class NotificationProbe').replace('MainFlowProbe','NotificationProbe')
-probe=probe.replace('static class MessageNotifications {static boolean busy;}', '''  static class MessageNotifications {static boolean busy;static int count;static void received(Context c,String chat,String title,String key,String body){count++;check(chat.equals("chat"),"wrong notification chat");}}
+probe=probe.replace('static class MessageNotifications {static boolean busy;}', '''  static class MessageNotifications {static boolean busy;static int count;static JSONObject ledger=new JSONObject();static boolean claim(Context c,String chat,JSONObject m){return claimNotification(ledger,chat,m);}static void received(Context c,String chat,String title,String key,String body){count++;check(chat.equals("chat"),"wrong notification chat");}}
   static class Context {}
   static class SharedPreferences {
     String value;SharedPreferences(String v){value=v;}String getString(String k,String fallback){return value;}
@@ -34,7 +34,15 @@ probe=probe[:start]+'''  public static void main(String[] args){
     update(c,prefs,"chat",null,null,replies);check(MessageNotifications.count==2,"duplicate Codex notification");
     replies.optJSONObject(0).put("version","v2").put("message","Result");update(c,prefs,"chat",null,null,replies);check(MessageNotifications.count==3,"updated result not notified");
     update(c,prefs,"deleted-chat",null,null,replies);check(MessageNotifications.count==3,"deleted conversation notified");
-    System.out.println("PASS: production background merge, timestamps, notification dedup and deleted-chat handling");
+    JSONObject stale=new JSONObject().put("role","assistant").put("jobId","job").put("state","completed").put("receivedAt",1L).put("content","reply");
+    check(!claimNotification(MessageNotifications.ledger,"chat",stale),"stale saved chat repeated a seen notification");
+    JSONObject ledger=new JSONObject(),m=new JSONObject().put("role","assistant").put("jobId","stable").put("receivedAt",1L).put("content","Result").put("codexReplyVersion","v1");
+    check(claimNotification(ledger,"chat",m),"first result missing");m.put("codexReplyVersion","v2");check(!claimNotification(ledger,"chat",m),"version-only update repeated alert");
+    JSONObject other=new JSONObject(m.toString()).put("notifiedVersion","");check(claimNotification(ledger,"other",other),"independent chat suppressed");m.put("content","New result");check(claimNotification(ledger,"chat",m),"new content suppressed");
+    check(!claimNotification(new JSONObject(ledger.toString()),"chat",m),"restart repeated old alert");
+    m.put("sentAt",200L).put("content","Latest result");check(claimNotification(ledger,"chat",m),"latest result lost");
+    m.put("sentAt",100L).put("content","Old progress");check(!claimNotification(ledger,"chat",m),"older saved progress repeated notification");
+    System.out.println("PASS: production background merge, stable notification ledger, version-only/stale/restart dedup and independent chats");
   }
 '''+probe[end:]
 probe=probe.rsplit('}',1)[0]+cards+'\n'+method+'\n}\n'

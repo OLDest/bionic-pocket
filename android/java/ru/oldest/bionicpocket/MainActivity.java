@@ -83,13 +83,14 @@ public final class MainActivity extends Activity {
             if(list!=null)for(int j=0;j<list.length();j++){
                 JSONObject message=list.optJSONObject(j);
                 if("pending".equals(message.optString("state"))&&message.optString("endpoint").isEmpty()){
-                    put(message,"assistantId",assistantId(chat));put(message,"endpoint",server);
+                    restoreRoute(message,assistantId(chat),endpoint(assistantId(chat)));
                 }
             }
         }
         String selected=prefs.getString("selected","");
         for(int i=0;i<chats.length();i++)if(chats.optJSONObject(i).optString("id").equals(selected))current=chats.optJSONObject(i);
         if(current==null)newChat(false);
+        MessageNotifications.initialize(this,chats);
         build(); render(); connect(false);
     }
     @Override public void onResume(){super.onResume();MessageNotifications.visible=true;foreground=true;try{if(activeNetwork.values().stream().allMatch(n->n==0)){String id=current.optString("id");JSONArray restored=new JSONArray(prefs.getString("chats","[]"));for(int i=0;i<restored.length();i++)if(id.equals(restored.optJSONObject(i).optString("id"))){chats=restored;current=chats.optJSONObject(i);break;}}openNotification(getIntent());render();}catch(Exception ignored){}MessageNotifications.channels(this);MessageSyncService.schedule(this);if(Build.VERSION.SDK_INT>=33&&checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=PackageManager.PERMISSION_GRANTED){if(!prefs.getBoolean("notificationAsked",false)){prefs.edit().putBoolean("notificationAsked",true).apply();requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},73);}}else startMessageSync();main.removeCallbacks(tick);main.post(tick);if(pendingInstall&&getPackageManager().canRequestPackageInstalls()){pendingInstall=false;installUpdate();} if(System.currentTimeMillis()-prefs.getLong("updateCheck",0)>86400000L)checkUpdate(false);}
@@ -110,15 +111,18 @@ public final class MainActivity extends Activity {
         if(Build.VERSION.SDK_INT>=30){getWindow().setDecorFitsSystemWindows(false);root.setOnApplyWindowInsetsListener((v,w)->{android.graphics.Insets bars=w.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());android.graphics.Insets keyboard=w.getInsets(WindowInsets.Type.ime());root.setPadding(dp(16)+bars.left,dp(12)+bars.top,dp(16)+bars.right,dp(10)+Math.max(bars.bottom,keyboard.bottom));return w;});}
         LinearLayout header=new LinearLayout(this);header.setGravity(Gravity.CENTER_VERTICAL);
         header.addView(button("☰",()->history()),new LinearLayout.LayoutParams(dp(48),dp(48)));
-        LinearLayout headText=column();headText.setPadding(dp(12),0,0,0);title=text("Bionic Pocket",21,TEXT);title.setTypeface(null,Typeface.BOLD);headText.addView(title);status=text("Подключение…",12,MUTED);headText.addView(status);header.addView(headText,new LinearLayout.LayoutParams(0,-2,1));header.addView(button("＋",()->newChat(true)),new LinearLayout.LayoutParams(dp(48),dp(48)));root.addView(header);gap(root,12);
-        assistantPicker=new Spinner(this);setItems(assistantPicker,new String[]{"Гонец","Домовой · office LAN"});root.addView(assistantPicker);
+        LinearLayout headText=column();headText.setPadding(dp(8),0,0,0);title=text("Bionic Pocket",18,TEXT);title.setSingleLine(true);title.setEllipsize(android.text.TextUtils.TruncateAt.END);title.setTypeface(null,Typeface.BOLD);headText.addView(title);status=text("Подключение…",11,MUTED);status.setSingleLine(true);status.setEllipsize(android.text.TextUtils.TruncateAt.END);headText.addView(status);header.addView(headText,new LinearLayout.LayoutParams(0,-2,1));header.addView(button("＋",()->newChat(true)),new LinearLayout.LayoutParams(dp(48),dp(48)));root.addView(header);
+        LinearLayout destination=new LinearLayout(this);destination.setGravity(Gravity.CENTER_VERTICAL);
+        assistantPicker=new Spinner(this);assistantPicker.setContentDescription("Получатель разговора");setItems(assistantPicker,new String[]{"Гонец","Домовой · office LAN"});destination.addView(assistantPicker,new LinearLayout.LayoutParams(0,dp(48),1));
+        LinearLayout advanced=column();advanced.setVisibility(View.GONE);
+        Button options=button("Параметры ▾",()->advanced.setVisibility(advanced.getVisibility()==View.VISIBLE?View.GONE:View.VISIBLE));options.setContentDescription("Показать или скрыть модель, проект и режим задачи");destination.addView(options,new LinearLayout.LayoutParams(-2,dp(48)));root.addView(destination);root.addView(advanced);
         assistantPicker.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onNothingSelected(AdapterView<?> p){}public void onItemSelected(AdapterView<?> p,View v,int pos,long id){if(!rendering)selectAssistant(pos==1?AssistantEndpoint.DOMOVOY:AssistantEndpoint.GONETS);}});
-        modelPicker=new Spinner(this);modelPicker.setContentDescription("Модель выбранного помощника");root.addView(modelPicker);
+        modelPicker=new Spinner(this);modelPicker.setContentDescription("Модель выбранного помощника");advanced.addView(modelPicker);
         modelPicker.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onNothingSelected(AdapterView<?> p){}public void onItemSelected(AdapterView<?> p,View v,int pos,long id){if(rendering||pos!=modelPicker.getSelectedItemPosition()||pos<0||pos>=modelIds.size())return;String model=modelIds.get(pos);if(model!=null&&!model.equals(current.optString("model"))){put(current,"model",model);save();}}});
-        LinearLayout selectors=new LinearLayout(this);projectPicker=new Spinner(this);modePicker=new Spinner(this);setItems(projectPicker,new String[]{"Без проекта"});setItems(modePicker,new String[]{"Общение","Задача с файлами"});selectors.addView(projectPicker,new LinearLayout.LayoutParams(0,dp(46),1));selectors.addView(modePicker,new LinearLayout.LayoutParams(0,dp(46),1));root.addView(selectors);
+        LinearLayout selectors=new LinearLayout(this);projectPicker=new Spinner(this);modePicker=new Spinner(this);setItems(projectPicker,new String[]{"Без проекта"});setItems(modePicker,new String[]{"Общение","Задача с файлами"});selectors.addView(projectPicker,new LinearLayout.LayoutParams(0,dp(46),1));selectors.addView(modePicker,new LinearLayout.LayoutParams(0,dp(46),1));advanced.addView(selectors);
         projectPicker.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onNothingSelected(AdapterView<?> p){}public void onItemSelected(AdapterView<?> p,View v,int pos,long id){if(!rendering){put(current,"project",pos==0?"":projects.optJSONObject(pos-1).optString("id"));save();}}});
         modePicker.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onNothingSelected(AdapterView<?> p){}public void onItemSelected(AdapterView<?> p,View v,int pos,long id){taskOptions.setVisibility(pos==1?View.VISIBLE:View.GONE);}});
-        taskOptions=column();fileInput=field("Файлы: main.go, internal/audio/player.go");fileInput.setTextSize(13);taskOptions.addView(fileInput);readOnly=new CheckBox(this);readOnly.setText("Только анализ — без изменений файлов");readOnly.setTextColor(MUTED);readOnly.setChecked(true);taskOptions.addView(readOnly);taskOptions.setVisibility(View.GONE);root.addView(taskOptions);
+        taskOptions=column();fileInput=field("Файлы: main.go, internal/audio/player.go");fileInput.setTextSize(13);taskOptions.addView(fileInput);readOnly=new CheckBox(this);readOnly.setText("Только анализ — без изменений файлов");readOnly.setTextColor(MUTED);readOnly.setChecked(true);taskOptions.addView(readOnly);taskOptions.setVisibility(View.GONE);advanced.addView(taskOptions);
         scroll=new ScrollView(this);scroll.setFillViewport(true);messages=column();messages.setPadding(0,dp(8),0,dp(12));scroll.addView(messages);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         attachmentBar=column();root.addView(attachmentBar);
         composer=new LinearLayout(this);composer.setGravity(Gravity.BOTTOM);Button attach=button("📎",()->pickAttachment());attach.setContentDescription("Attach file");composer.addView(attach,new LinearLayout.LayoutParams(dp(48),dp(52)));input=field("Сообщение помощнику…");input.setMinLines(1);input.setMaxLines(5);input.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE|android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);composer.addView(input,new LinearLayout.LayoutParams(0,-2,1));send=button("↑",()->send());send.setTextSize(25);send.setTextColor(BG);send.setBackground(box(GREEN,16));LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(dp(52),dp(52));sp.leftMargin=dp(8);composer.addView(send,sp);root.addView(composer);
@@ -210,6 +214,7 @@ public final class MainActivity extends Activity {
     }
     /** Render the selected chat without changing its assistant or stealing input focus. */
     private void render(){
+        if(foreground)MessageNotifications.readChat(this,current);
         renderAttachments();
         final boolean followBottom=scroll.getChildCount()==0||scroll.getChildAt(0).getHeight()-scroll.getHeight()-scroll.getScrollY()<=dp(80);
         rendering=true;assistantPicker.setSelection(AssistantEndpoint.DOMOVOY.equals(assistantId(current))?1:0);title.setText(current.optString("title","Bionic Pocket"));messages.removeAllViews();JSONArray list=entries();
@@ -563,12 +568,28 @@ public final class MainActivity extends Activity {
     private void openNotification(Intent intent){String id=intent.getStringExtra("chatId");if(id==null||id.isEmpty())return;for(int i=0;i<chats.length();i++)if(id.equals(chats.optJSONObject(i).optString("id"))){current=chats.optJSONObject(i);break;}intent.removeExtra("chatId");}
     private static String timeLabel(JSONObject m){StringBuilder s=new StringBuilder();long sent=m.optLong("sentAt",0),received=m.optLong("receivedAt",0);java.text.DateFormat f=new java.text.SimpleDateFormat("dd.MM.yyyy HH:mm:ss",Locale.getDefault());if(sent>0)s.append("Отправлено: ").append(f.format(new Date(sent)));if(received>0){if(s.length()>0)s.append("\n");s.append("Получено: ").append(f.format(new Date(received)));}return s.toString();}
     private static long serverTime(String value){try{return java.time.Instant.parse(value).toEpochMilli();}catch(Exception e){return 0;}}
+    static void restoreRoute(JSONObject message,String assistant,String origin){
+        if(message.optString("endpoint").isEmpty()){put(message,"assistantId",assistant);put(message,"endpoint",origin);}
+    }
+    static boolean claimNotification(JSONObject ledger,String chat,JSONObject m){
+        if(!"assistant".equals(m.optString("role"))||m.optLong("receivedAt",0)==0||m.optString("content").trim().isEmpty())return false;
+        String id=m.optString("jobId");if(id.isEmpty())id=m.optString("codexReplyId");if(id.isEmpty())return false;
+        String key=chat+"/"+id,body=m.optString("content"),version=m.optString("codexReplyVersion",m.optString("state"));
+        JSONObject prior=ledger.optJSONObject(key);long sent=m.optLong("sentAt",0);
+        if(prior!=null&&prior.optLong("sentAt",0)>sent)return false;
+        boolean same=prior!=null&&body.equals(prior.optString("body"));
+        if(same&&prior.optLong("sentAt",0)==sent)return false;
+        boolean legacy=!ledger.has(key)&&!version.isEmpty()&&version.equals(m.optString("notifiedVersion"));
+        JSONObject seen=new JSONObject();put(seen,"body",body);put(seen,"sentAt",sent);put(ledger,key,seen);put(m,"notifiedVersion",version);
+        return !legacy&&!same;
+    }
     private void notifyReceived(){
         for(int i=0;i<chats.length();i++){JSONObject chat=chats.optJSONObject(i);JSONArray list=chat.optJSONArray("messages");if(list==null)continue;
             for(int j=0;j<list.length();j++){JSONObject m=list.optJSONObject(j);if(!"assistant".equals(m.optString("role"))||m.optLong("receivedAt",0)==0)continue;
                 String key=m.optString("codexReplyId",m.optString("jobId")),version=m.optString("codexReplyVersion",m.optString("state"));
-                if(!version.equals(m.optString("notifiedVersion"))){MessageNotifications.received(this,chat.optString("id"),chat.optString("title","Bionic"),key,m.optString("content"));put(m,"notifiedVersion",version);}
+                if(MessageNotifications.claim(this,chat.optString("id"),m)&&!(foreground&&chat==current))MessageNotifications.received(this,chat.optString("id"),chat.optString("title","Bionic"),key,m.optString("content"));
             }
         }
+        if(foreground)MessageNotifications.clear(this,current.optString("id"));
     }
 }

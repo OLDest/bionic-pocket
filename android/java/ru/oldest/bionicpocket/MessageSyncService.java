@@ -72,6 +72,7 @@ public final class MessageSyncService extends Service {
     static void check(Context context,Handler main,Cancelled cancelled){
         if(cancelled.get()||(MessageNotifications.visible||MessageNotifications.busy))return;
         SharedPreferences prefs=context.getSharedPreferences("private",MODE_PRIVATE);
+        try{MessageNotifications.initialize(context,new JSONArray(prefs.getString("chats","[]")));}catch(JSONException ignored){}
         try{
             String token=token(prefs);if(token.isEmpty())return;
             JSONArray chats=new JSONArray(prefs.getString("chats","[]"));
@@ -101,7 +102,7 @@ public final class MessageSyncService extends Service {
                 if(changed){prefs.edit().putString("chats",chats.toString()).commit();
                     for(int j=0;j<list.length();j++){JSONObject m=list.optJSONObject(j);if(!"assistant".equals(m.optString("role"))||m.optLong("receivedAt",0)==0)continue;
                         String key=m.optString("codexReplyId",m.optString("jobId"));String version=m.optString("codexReplyVersion",m.optString("state"));
-                        if(!version.equals(m.optString("notifiedVersion"))){MessageNotifications.received(c,chatId,chat.optString("title","Bionic"),key,m.optString("content"));m.put("notifiedVersion",version);}
+                        if(MessageNotifications.claim(c,chatId,m))MessageNotifications.received(c,chatId,chat.optString("title","Bionic"),key,m.optString("content"));
                     }prefs.edit().putString("chats",chats.toString()).commit();}
             }
         }catch(Exception ignored){}

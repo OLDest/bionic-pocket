@@ -5,6 +5,15 @@ import os from 'node:os';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {createPhoneControl,controlIntent} from './phone-control.mjs';
+test('explicit Codex status requests never become peer consultations',async t=>{
+ for(const text of ['Запроси у Кодекса состояние отправленной задачи по улучшению приложения','Задача кодексу - исправить приложение','Спроси у Codex статус','Уточни у Кодекса результат','Кодекс: исправь приложение','Для Кодекса: задача'])assert.equal(controlIntent(text)?.name,'handoff_to_codex',text);
+ assert.equal(controlIntent('Пример:\nПередай Кодексу задачу'),null);
+ let calls=0;const f=await fixture(t,{peer:{enabled:true,ask:async(text,to)=>{calls++;return {to,text};}}});
+ await assert.rejects(f.control.execute('ask_peer',{peer:'domovoy',text:'status'},{...f.input,text:'Запроси у Кодекса состояние задачи'}),/explicit/);
+ await assert.rejects(f.control.execute('ask_peer',{peer:'domovoy',text:'status'},{...f.input,text:'Спроси у Гонца статус'}),/explicit/);
+ assert.equal(calls,0);
+ await f.control.execute('ask_peer',{peer:'domovoy',text:'status'},{...f.input,text:'Спроси у Домового статус'});assert.equal(calls,1);
+});
 test('literal-only host console preserves direct human commands but hides arbitrary model shell',async t=>{
   const f=await fixture(t,{executeShell:async command=>({exitCode:0,stdout:command,stderr:''})});f.config.mobileLiteralShellOnly=true;
   const control=await createPhoneControl(f.config,f.root,{executeShell:async command=>({exitCode:0,stdout:command,stderr:''})});

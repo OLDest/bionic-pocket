@@ -21,12 +21,26 @@ export const PHONE_TOOLS=[
   tool('run_shell','Full local Windows-account console through RTK/PowerShell. Use ONLY for the current human request. Full cmdlets; external programs rtk proxy. No imagined administrator rights.',{command:{type:'string'},cwd:{type:'string'}},['command'])
 ];
 // Recognize explicit human operational requests without treating peer replies as commands.
+export function helperRecipient(text){
+  // Only the addressing clause counts, never names inside an attached example/body.
+  const header=text.trim().split(/[:\n\r]/,1)[0];
+  if(/^(?:гонец|домовой)\s*[,!—-]\s*(?:передай|отправь|согласуй|обсуди|запроси|спроси|узнай|уточни|проверь)[^:\r\n]{0,120}(?:кодекс|codex|chatgpt)/i.test(header))return null;
+  const addressed=header.match(/^(?:(?:гонец|гонцу|домовой|домовому)\s*[,!—-]|(?:передай|отправь|сохрани|прими|это)[^\n:]{0,100}?(?:для\s+|(?:самому\s+)?)(гонцу|гонца|гонец|домовому|домового|домовой)(?=\s|[,!.—-]|$))/i);
+  if(!addressed)return null;
+  // An explicit Codex address in the same clause must stay authoritative.
+  const codex=header.search(/(?:кодекс|codex|chatgpt)/i);
+  const helper=header.search(/(?:гонц|гонец|домов)/i);
+  if(codex>=0&&codex<helper)return null;
+  return /домов/i.test(addressed[0])?'domovoy':'gonets';
+}
 export function controlIntent(text){
-  const value=text.trim();
+  const value=text.trim().replace(/^(?:гонец|домовой)\s*[,!—-]\s*(?=(?:передай|отправь|согласуй|обсуди|запроси|спроси|узнай|уточни|проверь)\s)/i,'');
   const peer=value.match(/^(?:спроси|обсуди|уточни)\s+(?:у\s+|с\s+)?(гонец|гонца|гонцом|домовой|домового|домовым)\s*[:,—-]?\s+([\s\S]+)$/i);
   if(peer)return {name:'ask_peer',args:{peer:/^гон/i.test(peer[1])?'gonets':'domovoy',text:peer[2]}};
+  if(helperRecipient(value))return null;
+  if(/^(?:(?:для\s+)?(?:кодекс(?:у|а)?|codex|chatgpt))\s*[:,!—-]/i.test(value))return {name:'handoff_to_codex'};
   if(/^(?:привет|здравствуй(?:те)?|как дела)[?!.\s]*$/i.test(value))return {name:'connection'};
-  if(/(?:согласуй|передай|отправь|обсуди)[\s\S]{0,120}(?:кодекс|codex|chatgpt)/i.test(value))return {name:'handoff_to_codex'};
+  if(/^(?:(?:задача|запрос)\s+(?:для\s+)?(?:кодекс|codex|chatgpt)|(?:согласуй|передай|отправь|обсуди|запроси|спроси|узнай|уточни|проверь)[^:\r\n]{0,120}(?:кодекс|codex|chatgpt))/i.test(value))return {name:'handoff_to_codex'};
   const rule=value.match(/^(?:запомни(?:\s+правило)?|сохрани\s+правило|запиши\s+(?:в\s+)?(?:глобальные\s+)?правила?)\s*[:—-]?\s+([\s\S]+)$/i);
   if(rule)return {name:'save_rule',args:{text:rule[1].trim()}};
   if(/^(?:(?:покажи|какие)\s+)?(?:мои\s+|сохранённые\s+|глобальные\s+)?правила[?!.\s]*$/i.test(value))return {name:'get_saved_rules'};
@@ -131,7 +145,7 @@ export async function createPhoneControl(config,storage,options={}){
     if(name==='save_rule')return saveRule(args.text,input);
     if(name==='handoff_to_codex'){if(!controlIntent(input.text)||controlIntent(input.text).name!=='handoff_to_codex')throw Error('Нужна явная просьба передать/согласовать с Codex');return handoff(input);}
     if(name==='run_shell')return consoleRun(args,input);
-    if(name==='ask_peer'){if(!options.peer?.enabled)throw Error('Peer channel is not configured');return options.peer.ask(args.text,args.peer);}
+    if(name==='ask_peer'){if(!options.peer?.enabled)throw Error('Peer channel is not configured');const intent=controlIntent(input.text);if(intent?.name!=='ask_peer'||intent.args.peer!==args.peer)throw Error('Peer consultation requires an explicit request for that helper');return options.peer.ask(args.text,args.peer);}
     if(name==='get_peer_response'){if(!options.peer?.enabled)throw Error('Peer channel is not configured');return options.peer.get(args.id);}
     if(name==='connection')return {reachable:true,model:config.model,runtime:options.runtimeStatus?.()??null,webToolsAvailable:true,webConnectionTested:false};
     throw Error('Unknown host tool');
