@@ -58,6 +58,7 @@ static class JSONObject {
   String getString(String k){if(!data.containsKey(k))throw new IllegalArgumentException(k);return optString(k);}
   long optLong(String k,long fallback){return data.containsKey(k)?getLong(k):fallback;}
   boolean optBoolean(String k){return Boolean.TRUE.equals(data.get(k));}
+  Object remove(String k){return data.remove(k);}
   // Support optional server upload metadata in the production method.
   boolean has(String k){return data.containsKey(k);}
   // Preserve exact byte counts when the production uploader reads required metadata.
@@ -95,7 +96,7 @@ flow=r'''
   int saves,renders,uploadCalls;
   // Record upload placement relative to actual message recovery and submission calls.
   void uploadAttachments(JSONObject answer){uploadCalls++;}
-  JSONArray entries(){return messages;} void render(){renders++;} void save(){saves++;}
+  JSONArray entries(){return messages;} void render(){renders++;} void save(){saves++;} void toast(String message){}
   static void put(JSONObject j,String k,Object v){j.put(k,v);}
   JSONObject apiFor(JSONObject answer,String route,JSONObject payload)throws Exception {activeOrigin=answer.optString("endpoint");return api(route,payload);}
   JSONObject api(String route,JSONObject payload)throws Exception {
@@ -126,7 +127,11 @@ flow=r'''
     f=fixture();f.responses.add(new IOException("offline"));f.poll();expectState(f,"pending");check(!f.answer().optString("pollError").contains("Ответ заберу"),"false guaranteed-answer promise remains");
     f=fixture();f.responses.add(new JSONObject().put("state","failed").put("error","model stopped"));f.poll();expectState(f,"error");
     check(f.answer().optBoolean("retryNew"),"server failure must permit explicit new attempt");
-    f.responses.add(done());f.retry(f.answer());expectState(f,"completed");check(!"fixed-id".equals(f.answer().optString("jobId")),"manual failed-job retry must have fresh ID");
+    f.responses.add(new JSONObject().put("state","failed").put("error","Actual old failure"));f.responses.add(done());f.retry(f.answer());expectState(f,"completed");check(!"fixed-id".equals(f.answer().optString("jobId")),"manual failed-job retry must have fresh ID");
+    f=fixture();f.apply(f.answer(),new JSONObject().put("state","awaiting_codex").put("answer","Waiting for coordinator"));expectState(f,"pending");check("Waiting for coordinator".equals(f.answer().optString("content")),"coordinator wait message lost");
+    f=fixture();f.answer().put("handoffId","cancelled-old").put("codexReplyId","cancelled-old").put("codexReplyStatus","received");f.apply(f.answer(),new JSONObject().put("state","failed").put("cancelledByOwner",true).put("error","Cancelled by owner"));expectState(f,"error");check(!f.answer().optBoolean("retryNew")&&f.answer().optString("handoffId").isEmpty()&&f.answer().optString("codexReplyId").isEmpty(),"cancelled request still polls/retries a handoff");
+    f=fixture();f.apply(f.answer(),new JSONObject().put("state","failed").put("cancelledByOwner",true).put("error","Owner cancelled"));f.retry(f.answer());f.submit(f.answer());check(f.calls.isEmpty(),"cancelled record submitted network work");f.apply(f.answer(),new JSONObject().put("state","running"));expectState(f,"error");
+    f=fixture();f.answer().put("state","error").put("retryNew",true);f.responses.add(new JSONObject().put("state","failed").put("cancelledByOwner",true).put("error","Owner cancelled"));f.retry(f.answer());expectState(f,"error");check(f.calls.size()==1&&f.calls.get(0).route.startsWith("/mobile/jobs/")&&f.calls.get(0).payload==null&&"fixed-id".equals(f.answer().optString("jobId")),"old cached error bypassed fresh owner cancellation check");
     f=fixture();f.apply(f.answer(),new JSONObject().put("state","running").put("answer","Queued, not yet confirmed"));expectState(f,"pending");check("Queued, not yet confirmed".equals(f.answer().optString("content")),"pending receipt text lost");
     f.apply(f.answer(),new JSONObject().put("state","completed").put("answer","Receipt confirmed"));expectState(f,"completed");check("Receipt confirmed".equals(f.answer().optString("content")),"confirmed receipt lost");
     f=fixture();JSONObject office=new JSONObject().put("state","pending").put("jobId","office-id").put("assistantId","domovoy").put("endpoint","http://192.168.10.20:1236");f.chats.put(new JSONObject().put("messages",new JSONArray().put(office)));
@@ -258,6 +263,7 @@ replies=r'''
     MainReplyProbe reverse=new MainReplyProbe();JSONArray reverseList=reverse.current.optJSONArray("messages");JSONObject reverseOriginal=new JSONObject().put("role","assistant").put("jobId","handoff-one").put("state","pending");reverseList.put(reverseOriginal);
     reverse.response=new JSONObject().put("replies",new JSONArray().put(update("start","received","working")));reverse.pollReplies();check(reverseOriginal.optString("state").equals("pending"),"received reply ended the request early");
     reverse.response=new JSONObject().put("replies",new JSONArray().put(completed));reverse.pollReplies();reverse.apply(reverseOriginal,new JSONObject().put("state","completed").put("codexReply",completed));
+    MainReplyProbe cancelledProbe=new MainReplyProbe();JSONObject cancelledMessage=new JSONObject().put("role","assistant").put("jobId","cancelled-id").put("state","pending");cancelledProbe.apply(cancelledMessage,new JSONObject().put("cancelledByOwner",true).put("state","failed").put("error","Owner cancelled"));JSONArray cancelledList=new JSONArray().put(cancelledMessage);applyCodexReplies(cancelledList,new JSONArray().put(update("cancelled-id","received","late read")).put(update("cancelled-id","in_progress","late work")));check("error".equals(cancelledMessage.optString("state"))&&cancelledMessage.optBoolean("cancelledByOwner")&&cancelledMessage.optString("codexReplyId").isEmpty(),"stale Codex reply resurrected owner cancellation");
     reverse.apply(reverseOriginal,new JSONObject().put("state","running").put("answer","stale queued"));reverse.apply(reverseOriginal,new JSONObject().put("state","running").put("codexReply",update("old","in_progress","stale working")));
     check(reverseList.length()==1&&reverseOriginal.optString("content").contains("one result")&&reverseOriginal.optString("state").equals("completed"),"reply-first completion regressed or duplicated");
     reverse.apply(reverseOriginal,new JSONObject().put("state","completed").put("codexReply",update("older","completed","obsolete result").put("updatedAt","2026-11-20T16:00:00Z")));check(reverseOriginal.optString("content").contains("one result"),"older completed snapshot replaced newer result");
