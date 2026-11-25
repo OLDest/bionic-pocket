@@ -54,7 +54,7 @@ public final class MainActivity extends Activity {
     private String renderedModelKey="";
     private final Map<String,Integer> activeNetwork=new HashMap<>(), pollCursor=new HashMap<>();
     private long lastCheck;
-    private final Runnable tick=new Runnable(){public void run(){if(foreground){if(repliesTurn)pollReplies();else poll();repliesTurn=!repliesTurn;main.postDelayed(this,2500);}}};
+    private final Runnable tick=new Runnable(){public void run(){if(foreground){if(repliesTurn)pollReplies();else poll();repliesTurn=!repliesTurn;main.postDelayed(this,MessageSyncService.hasPending(chats)?2500:15000);}}};
     /** Restore legacy chats as Gonets chats and retain their original delivery endpoint. */
     @Override public void onCreate(Bundle state){
         super.onCreate(state);
@@ -526,7 +526,9 @@ public final class MainActivity extends Activity {
     }
     /** Poll Codex updates through the selected chat's assistant without blocking the other assistant. */
     private void pollReplies(){
-        if(chats.length()==0)return;final JSONObject chat=chats.optJSONObject((replyChatIndex++)%chats.length());final String id=chat.optString("id"),assistant=assistantId(chat),origin=chatEndpoint(chat);
+        if(chats.length()==0)return;
+        ArrayList<JSONObject> waiting=new ArrayList<>();for(int i=0;i<chats.length();i++){JSONObject item=chats.optJSONObject(i);if(SyncPolicy.pending(item.optJSONArray("messages")))waiting.add(item);}
+        final JSONObject chat=waiting.isEmpty()?current:waiting.get((replyChatIndex++)%waiting.size());final String id=chat.optString("id"),assistant=assistantId(chat),origin=chatEndpoint(chat);
         if(origin.isEmpty()||activeNetwork.getOrDefault(assistant,0)>0)return;beginNetwork(assistant);
         executor(assistant).execute(()->{try{
             JSONObject response=apiConnection(chatConnection(chat),"/mobile/control/replies?chatId="+id,null);
@@ -542,7 +544,7 @@ public final class MainActivity extends Activity {
     private void installUpdate(){try{File file=new File(getCacheDir(),"update.apk");verifyPackage(file);if(!getPackageManager().canRequestPackageInstalls()){pendingInstall=true;new AlertDialog.Builder(this).setTitle("Разрешение Android").setMessage("Разрешите Bionic Pocket устанавливать свои обновления. Android всё равно запросит подтверждение установки.").setPositiveButton("Открыть настройки",(d,n)->startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:"+getPackageName())))).setNegativeButton("Позже",(d,n)->pendingInstall=false).show();return;}Intent intent=new Intent(Intent.ACTION_VIEW);intent.setDataAndType(Uri.parse("content://"+getPackageName()+".updates/update.apk"),"application/vnd.android.package-archive");intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);startActivity(intent);}catch(Exception e){toast("Не удалось открыть установщик: "+e.getMessage());}}
     private void toast(String value){Toast.makeText(this,value==null?"Ошибка":value,Toast.LENGTH_LONG).show();}
 
-    private void startMessageSync(){if(MessageNotifications.visible||!MessageSyncService.hasPending(chats)){stopService(new Intent(this,MessageSyncService.class));return;}try{startForegroundService(new Intent(this,MessageSyncService.class));}catch(Exception ignored){/* Scheduled job remains available if Android limits the service. */}}
+    private void startMessageSync(){MessageSyncService.schedule(this);if(MessageNotifications.visible||!MessageSyncService.hasPending(chats)){stopService(new Intent(this,MessageSyncService.class));return;}try{startForegroundService(new Intent(this,MessageSyncService.class));}catch(Exception ignored){/* Scheduled job remains available if Android limits the service. */}}
     @Override public void onRequestPermissionsResult(int code,String[] permissions,int[] results){super.onRequestPermissionsResult(code,permissions,results);if(code==73&&results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)startMessageSync();}
     @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);if(foreground){openNotification(intent);render();save();}}
     private void openNotification(Intent intent){String id=intent.getStringExtra("chatId");if(id==null||id.isEmpty())return;for(int i=0;i<chats.length();i++)if(id.equals(chats.optJSONObject(i).optString("id"))){current=chats.optJSONObject(i);break;}intent.removeExtra("chatId");}

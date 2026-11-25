@@ -62,6 +62,8 @@ probe=probe[:start]+'''  public static void main(String[] args){
     System.out.println("PASS: production background merge, timestamps, notification dedup and deleted-chat handling");
   }
 '''+probe[end:]
-probe=probe.rsplit('}',1)[0]+cards+'\n'+method+'\n'+policy+'\n}\n'
+sync_policy=(root/'android/java/ru/oldest/bionicpocket/SyncPolicy.java').read_text(encoding='utf-8')
+sync_policy=sync_policy[sync_policy.index('final class SyncPolicy'):].replace('final class SyncPolicy','static final class SyncPolicy',1)
+probe=probe.rsplit('}',1)[0]+cards+'\n'+method+'\n'+policy+'\n'+sync_policy+'\n}\n'
 out=root/'build/delivery-verification';(out/'NotificationProbe.java').write_text(probe,encoding='utf-8')
 for args in [[base['javac_path'],'-encoding','UTF-8','-cp',out,'-d',out,out/'NotificationProbe.java'],[base['java_path'],'-cp',out,'NotificationProbe']]:subprocess.run([base['rtk'],'proxy',*[str(a) for a in args]],cwd=root,check=True)
