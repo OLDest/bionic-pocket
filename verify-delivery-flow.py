@@ -87,6 +87,7 @@ flow=r'''
   final Map<String,Integer> activeNetwork=new HashMap<>(),pollCursor=new HashMap<>();
   static class Handler {void post(Runnable r){r.run();}}
   final Handler main=new Handler();
+  void postAlive(Runnable action){main.post(action);} void setNetworkBusy(boolean active){MessageNotifications.busy=active;}
   final JSONArray messages=new JSONArray();
   final JSONArray chats=new JSONArray();
   String assistantId(JSONObject chat){return chat.optString("assistant","gonets");}
@@ -181,7 +182,8 @@ upload=r'''
     // Run UI callbacks immediately so the upload's byte operations remain deterministic.
     void post(Runnable r){r.run();}
   }
-  final Handler main=new Handler();final ByteArrayOutputStream stored=new ByteArrayOutputStream();
+  final Handler main=new Handler();
+  void postAlive(Runnable action){main.post(action);} void setNetworkBusy(boolean active){MessageNotifications.busy=active;}final ByteArrayOutputStream stored=new ByteArrayOutputStream();
   File local;JSONObject metadata;boolean loseReply=true,conflict=false;int posts;
   // Resolve the exact original selected by the test, replacing only Android private-storage lookup.
   File attachmentFile(String id){return local;}
@@ -227,6 +229,7 @@ replies=r'''
     void post(Runnable r){r.run();}
   }
   final Handler main=new Handler();
+  void postAlive(Runnable action){main.post(action);} void setNetworkBusy(boolean active){MessageNotifications.busy=active;}
   // Substitute only the UI executor, keeping the production assistant choice intact.
   Executor executor(String assistant){return Runnable::run;}
   // Resolve the fixture's chat identity as the application does.

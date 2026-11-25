@@ -8,6 +8,8 @@ import org.json.*;
 
 final class MessageNotifications {
     static volatile boolean visible, busy;
+    private static final java.util.Set<Object> networkOwners=java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Object,Boolean>());
+    static synchronized void setBusy(Object owner,boolean active){if(active)networkOwners.add(owner);else networkOwners.remove(owner);busy=!networkOwners.isEmpty();}
     static final String CHANNEL="messages", SYNC="message-sync";
     static synchronized void initialize(Context c,JSONArray chats){
         SharedPreferences p=c.getSharedPreferences("private",Context.MODE_PRIVATE);
