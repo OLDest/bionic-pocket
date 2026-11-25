@@ -15,9 +15,15 @@ public final class AssistantEndpoint {
     /** Validate a server origin without accepting credentials, paths or a remote HTTP endpoint. */
     public static String validate(String assistant, String value) throws IOException {
         if (!GONETS.equals(assistant) && !DOMOVOY.equals(assistant)) throw new IOException("Unknown assistant");
+        return validate(assistant,value,DOMOVOY.equals(assistant));
+    }
+
+    /** A saved profile decides LAN policy; helper names never grant cleartext access. */
+    public static String validate(String assistant, String value, boolean privateLan) throws IOException {
+        if(assistant==null||!assistant.matches("[A-Za-z0-9_-]{1,80}")||value==null)throw new IOException("Invalid assistant profile");
         try {
             URI uri = new URI(value.trim());
-            boolean office = DOMOVOY.equals(assistant);
+            boolean office = privateLan;
             if (!("https".equals(uri.getScheme()) || office && "http".equals(uri.getScheme()))
                     || uri.getHost() == null || uri.getUserInfo() != null || uri.getQuery() != null
                     || uri.getFragment() != null || !(uri.getPath().isEmpty() || "/".equals(uri.getPath()))
@@ -33,6 +39,11 @@ public final class AssistantEndpoint {
     /** Reject public, loopback and link-local destinations for the office-only assistant. */
     public static void requireOfficeAddress(String assistant, String base) throws IOException {
         if (!DOMOVOY.equals(assistant)) return;
+        requirePrivateAddress(base);
+    }
+
+    /** Resolve every LAN address before credentials are sent, including custom profiles. */
+    public static void requirePrivateAddress(String base) throws IOException {
         try {
             for (InetAddress address : InetAddress.getAllByName(new URI(base).getHost())) {
                 if (!isPrivateAddress(address.getAddress())) throw new IOException("Domovoy is available only on the office LAN");

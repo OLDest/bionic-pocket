@@ -64,8 +64,8 @@ public final class MessageSyncService extends Service {
         Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.DECRYPT_MODE,(SecretKey)store.getKey("bionic-token",null),new GCMParameterSpec(128,android.util.Base64.decode(parts[0],2)));
         return new String(cipher.doFinal(android.util.Base64.decode(parts[1],2)),StandardCharsets.UTF_8);
     }
-    private static JSONObject get(String assistant,String server,String token,String route)throws Exception{
-        server=AssistantEndpoint.validate(assistant,server);AssistantEndpoint.requireOfficeAddress(assistant,server);
+    private static JSONObject get(AssistantRegistry.Connection connection,String route)throws Exception{
+        String server=connection.validate(),token=connection.token();if(token.isEmpty())throw new IOException("Токен исходного помощника недоступен");
         HttpURLConnection c=(HttpURLConnection)new URL(server+route).openConnection();c.setInstanceFollowRedirects(false);c.setConnectTimeout(10000);c.setReadTimeout(15000);c.setRequestProperty("Authorization","Bearer "+token);
         try{if(c.getResponseCode()!=200)throw new IOException("HTTP "+c.getResponseCode());try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){byte[] b=new byte[8192];int n;while((n=in.read(b))!=-1){if(out.size()+n>1000000)throw new IOException("Response too large");out.write(b,0,n);}return new JSONObject(out.toString("UTF-8"));}}finally{c.disconnect();}
     }
@@ -74,20 +74,20 @@ public final class MessageSyncService extends Service {
         SharedPreferences prefs=context.getSharedPreferences("private",MODE_PRIVATE);
         try{MessageNotifications.initialize(context,new JSONArray(prefs.getString("chats","[]")));}catch(JSONException ignored){}
         try{
-            String token=token(prefs);if(token.isEmpty())return;
+            // Connections are resolved per original request; no selected/shared-token fallback.
             JSONArray chats=new JSONArray(prefs.getString("chats","[]"));
             for(int i=0;i<chats.length()&&!cancelled.get();i++){
                 JSONObject chat=chats.optJSONObject(i);if(chat==null)continue;
-                String assistant=chat.optString("assistant",AssistantEndpoint.GONETS),server=prefs.getString(AssistantEndpoint.DOMOVOY.equals(assistant)?"officeServer":"server","");if(server.isEmpty())continue;
+                String assistant=chat.optString("assistant",AssistantEndpoint.GONETS),server=chat.optString("endpoint",AssistantRegistry.origin(prefs,assistant));if(server.isEmpty())continue;
                 String chatId=chat.optString("id");JSONArray list=chat.optJSONArray("messages");if(list==null)continue;
                 for(int j=0;j<list.length()&&!cancelled.get();j++){
                     JSONObject m=list.optJSONObject(j);if(m==null||!"pending".equals(m.optString("state"))||m.optString("jobId").isEmpty())continue;
-                    try{JSONObject job=get(m.optString("assistantId",assistant),m.optString("endpoint",server),token,"/mobile/jobs/"+m.optString("jobId"));final String jobId=m.optString("jobId");main.post(()->{
+                    try{JSONObject job=get(AssistantRegistry.resolve(prefs,m.optString("assistantId",assistant),m.optString("endpoint",server),m.optString("connectionId")),"/mobile/jobs/"+m.optString("jobId"));final String jobId=m.optString("jobId");main.post(()->{
                         if(cancelled.get()||(MessageNotifications.visible||MessageNotifications.busy))return;
                         update(context,prefs,chatId,jobId,job,null);
                     });}catch(Exception ignored){} // Preserve pending data for reconnect.
                 }
-                try{JSONArray replies=get(assistant,server,token,"/mobile/control/replies?chatId="+chatId).optJSONArray("replies");main.post(()->{if(!cancelled.get()&&!(MessageNotifications.visible||MessageNotifications.busy))update(context,prefs,chatId,null,null,replies);});}catch(Exception ignored){}
+                try{JSONArray replies=get(AssistantRegistry.resolve(prefs,assistant,server,chat.optString("connectionId")),"/mobile/control/replies?chatId="+chatId).optJSONArray("replies");main.post(()->{if(!cancelled.get()&&!(MessageNotifications.visible||MessageNotifications.busy))update(context,prefs,chatId,null,null,replies);});}catch(Exception ignored){}
             }
         }catch(Exception ignored){}
     }

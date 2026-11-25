@@ -46,6 +46,10 @@ def main():
             if len(personal.get('token',''))<32 or not personal.get('server','').startswith('https://'):raise RuntimeError('Personal connection settings missing')
             apk.writestr('assets/personal.json',json.dumps(personal))
     run(TOOLS/'zipalign.exe','-f','4',unsigned,WORK/'aligned.apk')
+    if '--unsigned' in sys.argv:
+        if PERSONAL:raise RuntimeError('Remote signing supports public builds only')
+        print('Public aligned APK ready for the existing external signer:',WORK/'aligned.apk')
+        return
     key=SIGNING/'release.keystore'; password=SIGNING/'keystore-password.txt'
     if key.exists()!=password.exists():raise RuntimeError('Signing key/password pair incomplete; restore it rather than rotate')
     if os.environ.get('BIONIC_SIGNING_DIR') and not key.exists():raise RuntimeError('Configured existing signing key is missing; refusing to generate a replacement')

@@ -29,6 +29,15 @@ if not exception_match:raise RuntimeError('Production ApiException is missing')
 exception=declaration(exception_match.group(0))
 imports='import java.io.*; import java.net.*; import java.util.*; import java.util.concurrent.*; import javax.net.ssl.*; import java.security.cert.Certificate; import java.nio.charset.StandardCharsets; import ru.oldest.bionicpocket.DeliveryPolicy; import ru.oldest.bionicpocket.AssistantEndpoint;\n'
 json_double=r'''
+// Replace only Android credential storage; actual registry/AES logic has its own JVM suite.
+static class AssistantRegistry {
+ static class Connection {
+  final String profileId,origin;Connection(String id,String value){profileId=id;origin=value;}
+  String token(){return "fixture-"+profileId;}
+  String validate()throws IOException{String base=AssistantEndpoint.validate(profileId,origin,"domovoy".equals(profileId));if("domovoy".equals(profileId))AssistantEndpoint.requirePrivateAddress(base);return base;}
+ }
+ static Connection resolve(Object prefs,String id,String origin,String pinned)throws IOException{return new Connection(id,origin);}
+}
 static class MessageNotifications {static boolean busy;}
 static void notifyReceived(){}
     private static long serverTime(String value){try{return java.time.Instant.parse(value).toEpochMilli();}catch(Exception e){return 0;}}
@@ -79,6 +88,7 @@ flow=r'''
   final Handler main=new Handler();
   final JSONArray messages=new JSONArray();
   final JSONArray chats=new JSONArray();
+  String assistantId(JSONObject chat){return chat.optString("assistant","gonets");}
   final Deque<Object> responses=new ArrayDeque<>();
   static class Call {String route,origin;JSONObject payload;Call(String r,JSONObject p,String o){route=r;payload=p;origin=o;}}
   final List<Call> calls=new ArrayList<>();
@@ -130,6 +140,8 @@ flow=r'''
 '''
 api=r'''
   String token="fixture",server="https://fixture.invalid";
+  final Object prefs=new Object();final JSONObject current=new JSONObject().put("assistant","gonets");
+  AssistantRegistry.Connection chatConnection(JSONObject chat)throws IOException{return AssistantRegistry.resolve(prefs,chat.optString("assistant"),server,"");}
   static int status;static String body,lastUrl;static boolean offline;
   static class FakeConnection extends HttpsURLConnection {
     FakeConnection(URL url){super(url);lastUrl=url.toString();} public void connect(){} public void disconnect(){} public boolean usingProxy(){return false;}
@@ -216,6 +228,9 @@ replies=r'''
   String assistantId(JSONObject chat){return chat.optString("assistant");}
   // Give each assistant a distinct fixture origin to detect cross-profile routing.
   String endpoint(String assistant){return assistant.equals("domovoy")?"http://192.168.88.1:1236":"https://gonets.invalid";}
+  String chatEndpoint(JSONObject chat){return endpoint(assistantId(chat));}
+  AssistantRegistry.Connection chatConnection(JSONObject chat){return new AssistantRegistry.Connection(assistantId(chat),chatEndpoint(chat));}
+  JSONObject apiConnection(AssistantRegistry.Connection connection,String route,JSONObject payload){calls++;lastOrigin=connection.origin;lastRoute=route;return response;}
   // Record the production poll's destination while replacing the network response.
   JSONObject apiAt(String assistant,String origin,String route,JSONObject payload){calls++;lastOrigin=origin;lastRoute=route;return response;}
   // Preserve actual card changes in the JSON double.
@@ -261,11 +276,15 @@ replies=r'''
   }
 '''
 out=worker/'build/delivery-verification';out.mkdir(parents=True,exist_ok=True)
-(out/'MainFlowProbe.java').write_text(imports+'public class MainFlowProbe {\n'+json_double+'\n'+exception+'\n'+flow+'\n'+'\n'.join(declaration(('    static void ' if name=='apply' else '    private void ')+name+'(') for name in ['submit','poll','retry','apply','beginNetwork','finishNetwork'])+'\n'+declaration('    private static boolean applyCodexReply(')+'\n'+declaration('    private JSONObject nextPending(')+'\n}\n',encoding='utf-8')
-(out/'MainApiProbe.java').write_text(imports+'public class MainApiProbe {\n'+json_double+'\n'+exception+'\n'+api+'\n'+declaration('    private JSONObject api(')+'\n'+declaration('    private JSONObject apiFor(')+'\n'+declaration('    private JSONObject apiAt(')+'\n'+declaration('    private static String read(')+'\n}\n',encoding='utf-8')
+(out/'MainFlowProbe.java').write_text(imports+'public class MainFlowProbe {\n'+json_double+'\n'+exception+'\n'+flow+'\n'+'\n'.join(declaration(('    static void ' if name=='apply' else '    private void ')+name+'(') for name in ['submit','poll','retry','apply','beginNetwork','finishNetwork'])+'\n'+declaration('    private static boolean applyCodexReply(')+'\n'+declaration('    private JSONObject nextPending(')+'\n'+declaration('    private Set<String> pendingAssistantIds(')+'\n}\n',encoding='utf-8')
+(out/'MainApiProbe.java').write_text(imports+'public class MainApiProbe {\n'+json_double+'\n'+exception+'\n'+api+'\n'+declaration('    private JSONObject api(')+'\n'+declaration('    private JSONObject apiFor(')+'\n'+declaration('    private JSONObject apiAt(')+'\n'+declaration('    private JSONObject apiConnection(')+'\n'+declaration('    private static String read(')+'\n}\n',encoding='utf-8')
 (out/'MainUploadProbe.java').write_text(imports+'public class MainUploadProbe {\n'+json_double+'\n'+exception+'\n'+upload+'\n'+declaration('    private void uploadAttachments(')+'\n}\n',encoding='utf-8')
 (out/'MainReplyProbe.java').write_text(imports+'public class MainReplyProbe {\n'+json_double+'\n'+replies+'\n'+declaration('    static void apply(')+'\n'+declaration('    private static boolean applyCodexReply(')+'\n'+declaration('    static boolean applyCodexReplies(')+'\n'+declaration('    private void pollReplies(')+'\n'+declaration('    private void beginNetwork(')+'\n'+declaration('    private void finishNetwork(')+'\n}\n',encoding='utf-8')
 java_home=os.environ.get('JAVA_HOME')
+if not java_home:
+    installed=pathlib.Path('C:/Users/OLDest/Documents/Codex/2026-11-15/go-https-pikabu-ru-story-yandeks/yago/.tools/jdk')
+    candidates=list(installed.glob('jdk-*')) if installed.is_dir() else []
+    if candidates:java_home=str(candidates[0])
 javac_path=str(pathlib.Path(java_home)/'bin/javac.exe') if java_home else shutil.which('javac')
 java_path=str(pathlib.Path(java_home)/'bin/java.exe') if java_home else shutil.which('java')
 if not javac_path or not java_path or not pathlib.Path(javac_path).is_file() or not pathlib.Path(java_path).is_file():raise RuntimeError('Set JAVA_HOME or put java and javac on PATH')
