@@ -2,7 +2,7 @@
 import pathlib,runpy,subprocess
 root=pathlib.Path(__file__).resolve().parent
 base=runpy.run_path(str(root/'verify-delivery-flow.py'))
-cards=base['declaration']('    static boolean applyCodexReplies(')+'\n'+base['declaration']('    static boolean claimNotification(')
+cards=base['declaration']('    static boolean applyCodexReplies(')+'\n'+base['declaration']('    static boolean applyChatReplies(')+'\n'+base['history_policy']+'\n'+base['declaration']('    static boolean claimNotification(')
 source=(root/'android/java/ru/oldest/bionicpocket/MessageSyncService.java').read_text(encoding='utf-8')
 # Reuse the balanced production-method extractor against this service.
 base['declaration'].__globals__['source']=source

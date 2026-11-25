@@ -41,7 +41,7 @@ public class LifecycleProbe extends BaseActivity {
   boolean foreground=true;volatile boolean destroyed;final Handler main=new Handler();final Runnable tick=()->{};Root root=new Root();
   final ExecutorService io=Executors.newSingleThreadExecutor(),updateIo=Executors.newSingleThreadExecutor(),fileIo=Executors.newSingleThreadExecutor();final Map<String,ExecutorService> assistantIo=new HashMap<>();
   int saves,syncStarts;String draft="draft survives rotation";final Object originalChat=new Object();Object current=originalChat;
-  void save(){saves++;}void startMessageSync(){syncStarts++;}
+  void finishMessageSelection(){}void save(){saves++;}void startMessageSync(){syncStarts++;}
   PRODUCTION_METHODS
   static void check(boolean value,String reason){if(!value)throw new AssertionError(reason);}
   public static void main(String[] args){

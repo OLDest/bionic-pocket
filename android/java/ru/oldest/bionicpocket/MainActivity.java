@@ -47,6 +47,9 @@ public final class MainActivity extends Activity {
     private Button send;
     private boolean foreground, rendering, pendingInstall, importingAttachment, repliesTurn;
     private volatile boolean destroyed;
+    private ActionMode messageSelection;
+    private JSONObject selectionChat;
+    private final Set<JSONObject> selectedMessages=Collections.newSetFromMap(new IdentityHashMap<JSONObject,Boolean>());
     private int replyChatIndex;
     private String server, token="", pollError="";
     private final Map<String,JSONArray> assistantProjects=new HashMap<>(), assistantModels=new HashMap<>();
@@ -98,7 +101,7 @@ public final class MainActivity extends Activity {
         build(); render(); connect(false);
     }
     @Override public void onResume(){super.onResume();MessageNotifications.visible=true;foreground=true;try{if(activeNetwork.values().stream().allMatch(n->n==0)){String id=current.optString("id");JSONArray restored=new JSONArray(prefs.getString("chats","[]"));for(int i=0;i<restored.length();i++)if(id.equals(restored.optJSONObject(i).optString("id"))){chats=restored;current=chats.optJSONObject(i);break;}}openNotification(getIntent());render();}catch(Exception ignored){}MessageNotifications.channels(this);MessageSyncService.schedule(this);if(Build.VERSION.SDK_INT>=33&&checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=PackageManager.PERMISSION_GRANTED){if(!prefs.getBoolean("notificationAsked",false)){prefs.edit().putBoolean("notificationAsked",true).apply();requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},73);}}else startMessageSync();main.removeCallbacks(tick);main.post(tick);if(pendingInstall&&getPackageManager().canRequestPackageInstalls()){pendingInstall=false;installUpdate();} if(System.currentTimeMillis()-prefs.getLong("updateCheck",0)>86400000L)checkUpdate(false);}
-    @Override public void onPause(){foreground=false;main.removeCallbacks(tick);save();MessageNotifications.visible=false;if(!isChangingConfigurations())startMessageSync();super.onPause();}
+    @Override public void onPause(){finishMessageSelection();foreground=false;main.removeCallbacks(tick);save();MessageNotifications.visible=false;if(!isChangingConfigurations())startMessageSync();super.onPause();}
     /** The programmatic layout resizes in place; retain requests, draft and work lanes on rotation. */
     @Override public void onConfigurationChanged(android.content.res.Configuration config){super.onConfigurationChanged(config);if(root!=null){root.requestLayout();root.requestApplyInsets();}}
     /** Stop the activity's independent network and file work lanes. */
@@ -181,7 +184,7 @@ public final class MainActivity extends Activity {
         }));}
     }
     /** Create a conversation for the selected assistant without mixing existing histories. */
-    private void newChat(boolean show){current=new JSONObject();put(current,"id",UUID.randomUUID().toString());String id=prefs.getString("selectedAssistant",AssistantRegistry.first(prefs));if(!AssistantRegistry.active(prefs,id))id=AssistantRegistry.first(prefs);put(current,"assistant",id);put(current,"model",AssistantRegistry.selectedModel(prefs,id));put(current,"title","Новый разговор");put(current,"project","");put(current,"messages",new JSONArray());chats.put(current);if(show){input.setText("");render();save();connect(false);}}
+    private void newChat(boolean show){finishMessageSelection();current=new JSONObject();put(current,"id",UUID.randomUUID().toString());String id=prefs.getString("selectedAssistant",AssistantRegistry.first(prefs));if(!AssistantRegistry.active(prefs,id))id=AssistantRegistry.first(prefs);put(current,"assistant",id);put(current,"model",AssistantRegistry.selectedModel(prefs,id));put(current,"title","Новый разговор");put(current,"project","");put(current,"messages",new JSONArray());chats.put(current);if(show){input.setText("");render();save();connect(false);}}
     /** Read the assistant identity, treating pre-profile conversations as Gonets conversations. */
     private String assistantId(JSONObject chat){return chat.optString("assistant",AssistantEndpoint.GONETS);}
     /** Read the selected assistant's origin; Domovoy is unconfigured until an office address is supplied. */
@@ -234,8 +237,11 @@ public final class MainActivity extends Activity {
         boolean waiting=false;
         for(int i=0;i<list.length();i++){
             JSONObject m=list.optJSONObject(i);boolean user="user".equals(m.optString("role"));String state=m.optString("state","completed");
-            LinearLayout bubble=column();bubble.setPadding(dp(14),dp(12),dp(14),dp(12));bubble.setBackground(box(user?0xff294a3a:PANEL,18));
-            TextView label=text(user?"Вы":AssistantRegistry.name(prefs,assistantId(current)),11,user?GREEN:MUTED);label.setTypeface(null,Typeface.BOLD);bubble.addView(label);gap(bubble,5);
+            LinearLayout bubble=column();bubble.setPadding(dp(14),dp(12),dp(14),dp(12));bubble.setBackground(box(selectedMessages.contains(m)?0xff375e50:(user?0xff294a3a:PANEL),18));
+            LinearLayout messageHeader=new LinearLayout(this);messageHeader.setGravity(Gravity.CENTER_VERTICAL);
+            if(messageSelection!=null){CheckBox checked=new CheckBox(this);checked.setContentDescription("Выбрать сообщение");checked.setChecked(selectedMessages.contains(m));checked.setOnCheckedChangeListener((v,value)->toggleMessage(m));messageHeader.addView(checked,new LinearLayout.LayoutParams(dp(44),dp(40)));}
+            TextView label=text(user?"Вы":AssistantRegistry.name(prefs,assistantId(current)),11,user?GREEN:MUTED);label.setTypeface(null,Typeface.BOLD);messageHeader.addView(label,new LinearLayout.LayoutParams(0,-2,1));
+            Button actions=button("⋮",()->messageActions(m));actions.setContentDescription("Действия с сообщением");messageHeader.addView(actions,new LinearLayout.LayoutParams(dp(44),dp(40)));bubble.addView(messageHeader);gap(bubble,5);
             String content=m.optString("content");
             if("pending".equals(state)){waiting=true;if(content.isEmpty())content=m.optString("taskId").isEmpty()?"Готовлю ответ…":"Задача выполняется на ПК…";String detail=m.optString("pollError");if(!detail.isEmpty())content+="\n"+detail;}
             if("error".equals(state))content="Не удалось получить ответ\n"+content;
@@ -245,7 +251,7 @@ public final class MainActivity extends Activity {
             if(!m.optString("taskStatus").isEmpty()){gap(bubble,6);bubble.addView(text("Отчёт: "+m.optString("taskStatus")+" · интеграция отдельно",11,MUTED));}
             if("error".equals(state)&&!m.optBoolean("cancelledByOwner")){final JSONObject retry=m;bubble.addView(button("Повторить",()->retry(retry)));}
             if(user&&i+1<list.length()){long accepted=list.optJSONObject(i+1).optLong("requestAcceptedAt",0);if(accepted>0)put(m,"receivedAt",accepted);}String dates=timeLabel(m);if(!dates.isEmpty()){gap(bubble,6);bubble.addView(text(dates,11,MUTED));}
-            final String copied=content;View.OnLongClickListener copyMessage=v->{((android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Bionic",copied));toast("Скопировано");return true;};label.setOnLongClickListener(copyMessage);if(body!=null)body.setOnLongClickListener(copyMessage);
+            View.OnLongClickListener selectMessage=v->{beginMessageSelection(m);return true;};bubble.setOnLongClickListener(selectMessage);label.setOnLongClickListener(selectMessage);if(body!=null)body.setOnLongClickListener(selectMessage);bubble.setOnClickListener(v->{if(messageSelection!=null)toggleMessage(m);});
             LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-1,-2);bp.topMargin=dp(10);if(user)bp.leftMargin=dp(32);else bp.rightMargin=dp(12);messages.addView(bubble,bp);
         }
         // An older reply or its status request must not lock the composer.
@@ -256,6 +262,21 @@ public final class MainActivity extends Activity {
         // never take focus (or the IME composing cursor) from either editor.
         if(followBottom)scroll.post(()->scroll.scrollTo(0,Math.max(0,messages.getHeight()-scroll.getHeight())));
     }
+    private void copyMessage(JSONObject message){((android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Bionic",message.optString("content")));toast("Скопировано");}
+    private void messageActions(JSONObject message){new AlertDialog.Builder(this).setTitle("Сообщение").setItems(new String[]{"Копировать","Выбрать","Удалить"},(d,n)->{if(n==0)copyMessage(message);else if(n==1)beginMessageSelection(message);else confirmDeleteMessages(current,new HashSet<>(Collections.singleton(message)));}).setNegativeButton("Отмена",null).show();}
+    private void finishMessageSelection(){if(messageSelection!=null)messageSelection.finish();}
+    private void toggleMessage(JSONObject message){if(selectedMessages.contains(message))selectedMessages.remove(message);else selectedMessages.add(message);if(messageSelection!=null){messageSelection.setTitle("Выбрано: "+selectedMessages.size());messageSelection.invalidate();}render();}
+    private void beginMessageSelection(JSONObject message){
+        if(messageSelection==null){selectionChat=current;messageSelection=startActionMode(new ActionMode.Callback(){
+            public boolean onCreateActionMode(ActionMode mode,Menu menu){menu.add(0,1,0,"Все");menu.add(0,2,1,"Копировать");menu.add(0,3,2,"Удалить").setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);return true;}
+            public boolean onPrepareActionMode(ActionMode mode,Menu menu){menu.findItem(2).setEnabled(selectedMessages.size()==1);menu.findItem(3).setEnabled(!selectedMessages.isEmpty());return true;}
+            public boolean onActionItemClicked(ActionMode mode,MenuItem item){if(item.getItemId()==1){selectedMessages.clear();JSONArray list=entries();for(int i=0;i<list.length();i++)if(list.optJSONObject(i)!=null)selectedMessages.add(list.optJSONObject(i));mode.setTitle("Выбрано: "+selectedMessages.size());mode.invalidate();render();}else if(item.getItemId()==2&&!selectedMessages.isEmpty())copyMessage(selectedMessages.iterator().next());else if(item.getItemId()==3)confirmDeleteMessages(selectionChat,new HashSet<>(selectedMessages));return true;}
+            public void onDestroyActionMode(ActionMode mode){messageSelection=null;selectionChat=null;selectedMessages.clear();if(!destroyed)render();}
+        });if(messageSelection==null){selectionChat=null;return;}messageSelection.setTitle("Выбрано: 0");}
+        if(message!=null)toggleMessage(message);else render();
+    }
+    private void confirmDeleteMessages(JSONObject chat,Set<JSONObject> selected){if(chat==null||selected.isEmpty())return;new AlertDialog.Builder(this).setTitle("Удалить сообщения: "+selected.size()+"?").setMessage("Удаление только с этого телефона. Задачи на ПК продолжат работу; их поздние ответы не восстановят удалённые сообщения.").setPositiveButton("Удалить",(d,n)->{ChatHistory.delete(chat,selected);finishMessageSelection();MessageNotifications.clear(this,chat.optString("id"));save();render();MessageSyncService.schedule(this);}).setNegativeButton("Отмена",null).show();}
+    private void clearChat(JSONObject chat){new AlertDialog.Builder(this).setTitle("Очистить сообщения?").setMessage("Удалить все сообщения этого чата с телефона? Настройки и черновик сохранятся. Задачи на ПК продолжат работу, удалённые ответы не появятся снова.").setPositiveButton("Очистить",(d,n)->{ChatHistory.clear(chat,System.currentTimeMillis());finishMessageSelection();MessageNotifications.clear(this,chat.optString("id"));save();render();MessageSyncService.schedule(this);}).setNegativeButton("Отмена",null).show();}
     /** Open the active conversation list with visible actions for each chat. */
     private void history(){history(false);}
     /** Show active or archived chats while keeping their histories and pending requests intact. */
@@ -277,7 +298,7 @@ public final class MainActivity extends Activity {
         dialog.show();
     }
     /** Select a saved conversation without changing its assistant or delivery endpoints. */
-    private void openChat(JSONObject chat){current=chat;activateProjects(assistantId(chat));input.setText("");render();save();connect(false);}
+    private void openChat(JSONObject chat){finishMessageSelection();current=chat;activateProjects(assistantId(chat));input.setText("");render();save();connect(false);}
     /** Move away from a removed or archived visible chat, preferring the same assistant's active history. */
     private void leaveChat(JSONObject chat){
         if(current!=chat)return;
@@ -289,9 +310,9 @@ public final class MainActivity extends Activity {
     /** Offer archive/restore and confirmed local deletion for the selected list entry. */
     private void chatActions(JSONObject chat){
         boolean archived=chat.optBoolean("archived");
-        new AlertDialog.Builder(this).setTitle(chat.optString("title")).setItems(new String[]{archived?"Restore chat":"Archive chat","Delete chat"},(d,n)->{
+        new AlertDialog.Builder(this).setTitle(chat.optString("title")).setItems(new String[]{archived?"Восстановить чат":"Архивировать чат","Очистить сообщения","Удалить чат"},(d,n)->{
             if(n==0){put(chat,"archived",!archived);if(!archived)leaveChat(chat);save();render();}
-            else deleteChat(chat);
+            else if(n==1)clearChat(chat);else deleteChat(chat);
         }).setNegativeButton("Cancel",null).show();
     }
     /** Delete only the phone's saved conversation after confirmation; remote tasks continue independently. */
@@ -301,7 +322,7 @@ public final class MainActivity extends Activity {
             .setNegativeButton("Cancel",null).show();
     }
     /** Configure independent assistant profiles and their encrypted credentials. */
-    private void settings(){LinearLayout form=column();form.setPadding(dp(20),dp(8),dp(20),dp(12));form.addView(text("Помощники",18,TEXT));JSONArray all=AssistantRegistry.profiles(prefs);for(int i=0;i<all.length();i++){JSONObject p=all.optJSONObject(i);if(p.optBoolean("disabled"))continue;final String id=p.optString("id");form.addView(button(p.optString("name")+" · изменить",()->editAssistant(id)));}form.addView(button("＋ Добавить помощника",()->editAssistant("")));gap(form,10);form.addView(button("Названия моделей выбранного помощника",()->editModelNames()));form.addView(text("Список моделей приходит от выбранного помощника. Адрес и токен принятых запросов сохраняются до получения ответа.",12,MUTED));form.addView(button("Уведомления Android",()->startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName()))));form.addView(button("Проверить обновления",()->checkUpdate(true)));form.addView(button("Удалить этот разговор",()->deleteChat(current)));ScrollView holder=new ScrollView(this);holder.addView(form);new AlertDialog.Builder(this).setTitle("Bionic Pocket · "+version()).setView(holder).setPositiveButton("Готово",null).show();}
+    private void settings(){final AlertDialog[] settingsDialog=new AlertDialog[1];LinearLayout form=column();form.setPadding(dp(20),dp(8),dp(20),dp(12));form.addView(text("Помощники",18,TEXT));JSONArray all=AssistantRegistry.profiles(prefs);for(int i=0;i<all.length();i++){JSONObject p=all.optJSONObject(i);if(p.optBoolean("disabled"))continue;final String id=p.optString("id");form.addView(button(p.optString("name")+" · изменить",()->editAssistant(id)));}form.addView(button("＋ Добавить помощника",()->editAssistant("")));gap(form,10);form.addView(button("Названия моделей выбранного помощника",()->editModelNames()));form.addView(text("Список моделей приходит от выбранного помощника. Адрес и токен принятых запросов сохраняются до получения ответа.",12,MUTED));form.addView(button("Уведомления Android",()->startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName()))));form.addView(button("Проверить обновления",()->checkUpdate(true)));form.addView(button("Выбрать сообщения",()->{if(settingsDialog[0]!=null)settingsDialog[0].dismiss();beginMessageSelection(null);}));form.addView(button("Очистить сообщения",()->clearChat(current)));form.addView(button("Удалить этот разговор",()->deleteChat(current)));ScrollView holder=new ScrollView(this);holder.addView(form);settingsDialog[0]=new AlertDialog.Builder(this).setTitle("Bionic Pocket · "+version()).setView(holder).setPositiveButton("Готово",null).create();settingsDialog[0].show();}
     private void editAssistant(String id){LinearLayout form=column();form.setPadding(dp(20),dp(8),dp(20),dp(12));JSONObject existing=AssistantRegistry.profile(prefs,id);EditText name=field("Имя помощника"),url=field("https://адрес-моста"),secret=field("Токен доступа");name.setSingleLine(true);url.setSingleLine(true);secret.setSingleLine(true);secret.setTransformationMethod(PasswordTransformationMethod.getInstance());CheckBox lan=new CheckBox(this);lan.setText("Только частная LAN (разрешить HTTP)");lan.setTextColor(TEXT);if(existing!=null){name.setText(existing.optString("name"));url.setText(endpoint(id));secret.setHint("Пустое поле — оставить текущий токен");try{lan.setChecked(AssistantRegistry.current(prefs,id).privateLan);}catch(Exception ignored){}}form.addView(name);gap(form,8);form.addView(url);gap(form,8);form.addView(secret);form.addView(lan);form.addView(text("Токен зашифрован Android Keystore. Для HTTP проверяются все адреса LAN.",12,MUTED));if(existing!=null)form.addView(button("Удалить помощника",()->new AlertDialog.Builder(this).setTitle("Удалить помощника?").setMessage("История и исходные подключения уже отправленных запросов сохранятся.").setPositiveButton("Удалить",(d,n)->{AssistantRegistry.remove(prefs,id);if(id.equals(assistantId(current))){prefs.edit().putString("selectedAssistant",AssistantRegistry.first(prefs)).apply();newChat(false);}render();save();}).setNegativeButton("Отмена",null).show()));ScrollView holder=new ScrollView(this);holder.addView(form);AlertDialog dialog=new AlertDialog.Builder(this).setTitle(existing==null?"Новый помощник":"Настройки помощника").setView(holder).setPositiveButton("Сохранить",null).setNegativeButton("Отмена",null).create();dialog.setOnShowListener(d->dialog.getButton(-1).setOnClickListener(v->{try{String previous="";try{previous=AssistantRegistry.current(prefs,id).id;}catch(Exception ignored){}String saved=AssistantRegistry.save(prefs,id,name.getText().toString(),url.getText().toString(),lan.isChecked(),secret.getText().toString());if(id.isEmpty()){prefs.edit().putString("selectedAssistant",saved).apply();newChat(false);}else if(saved.equals(assistantId(current))&&!previous.equals(AssistantRegistry.current(prefs,saved).id)&&entries().length()>0){prefs.edit().putString("selectedAssistant",saved).apply();newChat(false);}assistantModels.remove(saved);assistantModelOrigins.remove(saved);renderedModelKey="";dialog.dismiss();render();save();connect(true);}catch(Exception e){toast(e.getMessage());}}));dialog.show();}
     private void editModelNames(){JSONArray models=availableModels();if(models.length()==0){toast("Сначала подключитесь к помощнику");connect(true);return;}String[] names=new String[models.length()];for(int i=0;i<models.length();i++){JSONObject m=models.optJSONObject(i);names[i]=AssistantRegistry.modelName(prefs,assistantId(current),m.optString("id"),m.optString("name",m.optString("id")));}new AlertDialog.Builder(this).setTitle("Названия моделей").setItems(names,(d,n)->{JSONObject m=models.optJSONObject(n);final String owner=assistantId(current),model=m.optString("id");EditText label=field(m.optString("name",model));label.setText(AssistantRegistry.modelName(prefs,owner,model,m.optString("name",model)));new AlertDialog.Builder(this).setTitle("Название модели").setView(label).setPositiveButton("Сохранить",(x,k)->{AssistantRegistry.setModelName(prefs,owner,model,label.getText().toString());renderedModelKey="";render();}).setNegativeButton("Отмена",null).show();}).setNegativeButton("Готово",null).show();}
     private String version(){try{return getPackageManager().getPackageInfo(getPackageName(),0).versionName;}catch(Exception e){return "0.1.0";}}
@@ -530,6 +551,7 @@ public final class MainActivity extends Activity {
         }
         return changed;
     }
+    static boolean applyChatReplies(JSONObject chat,JSONArray updates){return applyCodexReplies(chat.optJSONArray("messages"),ChatHistory.visibleReplies(chat,updates));}
     /** Poll Codex updates through the selected chat's assistant without blocking the other assistant. */
     private void pollReplies(){
         if(chats.length()==0)return;
@@ -538,7 +560,7 @@ public final class MainActivity extends Activity {
         if(origin.isEmpty()||activeNetwork.getOrDefault(assistant,0)>0)return;beginNetwork(assistant);
         executor(assistant).execute(()->{try{
             JSONObject response=apiConnection(chatConnection(chat),"/mobile/control/replies?chatId="+id,null);
-            postAlive(()->{finishNetwork(assistant);if(applyCodexReplies(chat.optJSONArray("messages"),response.optJSONArray("replies"))){notifyReceived();save();if(current==chat)render();}});
+            postAlive(()->{finishNetwork(assistant);if(applyChatReplies(chat,response.optJSONArray("replies"))){notifyReceived();save();if(current==chat)render();}});
         }catch(Exception error){postAlive(()->{finishNetwork(assistant);});}});
     }
     private JSONObject publicJson(String location) throws Exception {HttpsURLConnection c=(HttpsURLConnection)new URL(location).openConnection();c.setConnectTimeout(10000);c.setReadTimeout(15000);c.setRequestProperty("User-Agent","BionicPocket");c.setRequestProperty("Cache-Control","no-cache");try{if(c.getResponseCode()!=200)throw new IOException("Обновления недоступны");return new JSONObject(read(c.getInputStream(),100000));}finally{c.disconnect();}}

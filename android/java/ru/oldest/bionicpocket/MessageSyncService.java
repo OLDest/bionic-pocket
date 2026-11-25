@@ -100,7 +100,7 @@ public final class MessageSyncService extends Service {
                 JSONObject chat=chats.optJSONObject(i);if(!chatId.equals(chat.optString("id")))continue;
                 JSONArray list=chat.optJSONArray("messages");boolean changed=false;
                 if(job!=null)for(int j=0;j<list.length();j++){JSONObject m=list.optJSONObject(j);if(jobId.equals(m.optString("jobId"))&&"pending".equals(m.optString("state"))){MainActivity.apply(m,job);changed=true;}}
-                if(replies!=null)changed=MainActivity.applyCodexReplies(list,replies)||changed;
+                if(replies!=null)changed=MainActivity.applyChatReplies(chat,replies)||changed;
                 if(changed){prefs.edit().putString("chats",chats.toString()).commit();
                     for(int j=0;j<list.length();j++){JSONObject m=list.optJSONObject(j);if(!"assistant".equals(m.optString("role"))||m.optLong("receivedAt",0)==0)continue;
                         String key=m.optString("codexReplyId",m.optString("jobId"));String version=m.optString("codexReplyVersion",m.optString("state"));
