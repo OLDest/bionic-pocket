@@ -1,8 +1,12 @@
 """Run the real registry/crypto/JSON logic on JVM; Android Keystore and prefs are fixtures."""
-import hashlib,os,pathlib,subprocess,urllib.request
+import hashlib,os,pathlib,shutil,subprocess,urllib.request
 root=pathlib.Path(__file__).resolve().parent
 tools=pathlib.Path('C:/Users/OLDest/Documents/Codex/2026-11-15/go-https-pikabu-ru-story-yandeks/yago/.tools')
-jdk=pathlib.Path(os.environ['JAVA_HOME']) if os.environ.get('JAVA_HOME') else next((tools/'jdk').glob('jdk-*'))
+jdk=pathlib.Path(os.environ['JAVA_HOME']) if os.environ.get('JAVA_HOME') else next((tools/'jdk').glob('jdk-*'),None)
+if jdk is None:
+    compiler=shutil.which('javac')
+    if not compiler:raise RuntimeError('Set JAVA_HOME or put javac on PATH')
+    jdk=pathlib.Path(compiler).resolve().parent.parent
 jar=root/'.local/task-tools/json-20240303.jar';jar.parent.mkdir(parents=True,exist_ok=True)
 expected='3cf6cd6892e32e2b4c1c39e0f52f5248a2f5b37646fdfbb79a66b46b618414ed'
 if not jar.exists():jar.write_bytes(urllib.request.urlopen('https://repo.maven.apache.org/maven2/org/json/json/20240303/json-20240303.jar',timeout=20).read())
@@ -17,14 +21,16 @@ sources={
 import ru.oldest.bionicpocket.*;import org.json.*;import android.content.SharedPreferences;import java.util.*;import java.security.*;import java.security.cert.Certificate;import java.security.spec.AlgorithmParameterSpec;import javax.crypto.*;import java.io.*;
 public class RegistryProbe {
  static final Map<String,Key> keys=new HashMap<>();
- public static class ProviderFixture extends Provider {public ProviderFixture(){super("AndroidKeyStore",1.0,"JVM fixture, not Android device attestation");put("KeyStore.AndroidKeyStore",Store.class.getName());put("KeyGenerator.AES",Generator.class.getName());}}
+ public static class ProviderFixture extends Provider {public ProviderFixture(){super("AndroidKeyStore",1.0,"JVM fixture, not Android device attestation");put("KeyStore.AndroidKeyStore",Store.class.getName());}}
  public static class Store extends KeyStoreSpi {public Key engineGetKey(String a,char[] p){return keys.get(a);}public Certificate[] engineGetCertificateChain(String a){return null;}public Certificate engineGetCertificate(String a){return null;}public Date engineGetCreationDate(String a){return new Date();}public void engineSetKeyEntry(String a,Key k,char[] p,Certificate[] c){keys.put(a,k);}public void engineSetKeyEntry(String a,byte[] k,Certificate[] c){}public void engineSetCertificateEntry(String a,Certificate c){}public void engineDeleteEntry(String a){keys.remove(a);}public Enumeration<String> engineAliases(){return Collections.enumeration(keys.keySet());}public boolean engineContainsAlias(String a){return keys.containsKey(a);}public int engineSize(){return keys.size();}public boolean engineIsKeyEntry(String a){return keys.containsKey(a);}public boolean engineIsCertificateEntry(String a){return false;}public String engineGetCertificateAlias(Certificate c){return null;}public void engineStore(OutputStream o,char[] p){}public void engineLoad(InputStream i,char[] p){}}
- public static class Generator extends KeyGeneratorSpi {String alias;protected void engineInit(SecureRandom r){}protected void engineInit(int s,SecureRandom r){}protected void engineInit(AlgorithmParameterSpec s,SecureRandom r){alias=((android.security.keystore.KeyGenParameterSpec)s).alias;}protected SecretKey engineGenerateKey(){try{KeyGenerator g=KeyGenerator.getInstance("AES","SunJCE");g.init(256);SecretKey k=g.generateKey();keys.put(alias,k);return k;}catch(Exception e){throw new RuntimeException(e);}}}
  static class Prefs implements SharedPreferences {Map<String,String> values=new HashMap<>();public String getString(String k,String d){return values.getOrDefault(k,d);}public boolean contains(String k){return values.containsKey(k);}public Editor edit(){return new Editor(){Map<String,String> pending=new HashMap<>();public Editor putString(String k,String v){pending.put(k,v);return this;}public boolean commit(){values.putAll(pending);return true;}public void apply(){commit();}};}}
  static void check(boolean ok,String why){if(!ok)throw new AssertionError(why);}
  interface F {void run()throws Exception;}
  static void rejected(F f,String why)throws Exception{try{f.run();throw new AssertionError(why);}catch(IOException expected){}}
  public static void main(String[] args)throws Exception{
+  // Android key creation is a fixture. Use the installed JCE provider to seed
+  // its key, so Oracle JDK need not trust an unsigned crypto provider.
+  KeyGenerator fixtureKey=KeyGenerator.getInstance("AES");fixtureKey.init(256);keys.put("bionic-token",fixtureKey.generateKey());
   Security.addProvider(new ProviderFixture());Prefs empty=new Prefs();AssistantRegistry.migrate(empty,"https://unused.invalid");check(AssistantRegistry.profiles(empty).length()==0,"fresh install fixes helper list");
   Prefs p=new Prefs();String original="original-owner-token-12345678901234567890",next="new-owner-token-123456789012345678901234";String chats="[{\"id\":\"old-chat\",\"messages\":[]}]";
   p.edit().putString("server","https://old.example").putString("officeServer","http://192.168.88.1:1236").putString("token",AssistantRegistry.encrypt(original)).putString("chats",chats).commit();AssistantRegistry.migrate(p,"https://unused.invalid");
@@ -48,7 +54,8 @@ public class RegistryProbe {
 }
 '''}
 for relative,text in sources.items():p=out/relative;p.parent.mkdir(parents=True,exist_ok=True);p.write_text(text,encoding='utf-8')
-rtk=os.environ.get('RTK',str(pathlib.Path.home()/'.local/bin/rtk.exe'))
+rtk=os.environ.get('RTK') or shutil.which('rtk')
+if not rtk:raise RuntimeError('Set RTK or put rtk on PATH')
 args=[jdk/'bin/javac.exe','-encoding','UTF-8','-cp',jar,'-d',out,*[out/f for f in sources],root/'android/java/ru/oldest/bionicpocket/AssistantRegistry.java',root/'android/java/ru/oldest/bionicpocket/AssistantEndpoint.java']
 subprocess.run([rtk,'proxy',*[str(a)for a in args]],cwd=root,check=True)
 subprocess.run([rtk,'proxy',str(jdk/'bin/java.exe'),'-cp',str(out)+os.pathsep+str(jar),'RegistryProbe'],cwd=root,check=True)
