@@ -4,7 +4,7 @@ root=pathlib.Path(__file__).resolve().parent
 base=runpy.run_path(str(root/'verify-pending-notifications.py'))
 extract=base['base']['declaration']
 extract.__globals__['source']=(root/'android/java/ru/oldest/bionicpocket/MessageSyncService.java').read_text(encoding='utf-8')
-methods=extract('    static void check(')+'\n'+extract('    static void schedule(')
+methods=extract('    static void check(')+'\n'+extract('    static void schedule(')+'\n'+extract('    private static void checkInbox(')
 probe=(root/'build/delivery-verification/NotificationProbe.java').read_text(encoding='utf-8').replace('NotificationProbe','EnergyProbe')
 registry_start=probe.index('static class AssistantRegistry {')
 registry_end=probe.index('  static class MessageNotifications',registry_start)
@@ -18,10 +18,12 @@ probe=probe.replace('static class Context {}', '''static final int MODE_PRIVATE=
   static class MessageSyncJob {}
   static class JobInfo {static final int NETWORK_TYPE_ANY=1;static class Builder {Builder(int id,ComponentName name){}Builder setRequiredNetworkType(int type){return this;}Builder setPeriodic(long ms){check(ms==900000L,"wrong background interval");return this;}JobInfo build(){return new JobInfo();}}}
   static class JobScheduler {JobInfo job;int schedules,cancels;JobInfo getPendingJob(int id){return job;}void cancel(int id){job=null;cancels++;}void schedule(JobInfo j){job=j;schedules++;}}
-  static class AssistantRegistry {static String origin(SharedPreferences p,String id){return "https://helper";}static class Connection {}static Connection resolve(SharedPreferences p,String a,String b,String c){return new Connection();}}
+  static class AssistantRegistry {static String origin(SharedPreferences p,String id){return "https://helper";}static class Connection {String profileId="helper",id="connection",origin="https://helper";}static Connection resolve(SharedPreferences p,String a,String b,String c){return new Connection();}}
+  static class PocketInbox {static ArrayList<AssistantRegistry.Connection> sources=new ArrayList<>();static ArrayList<AssistantRegistry.Connection> connections(SharedPreferences p){return sources;}static JSONArray merge(JSONArray chats,JSONObject receipts,String profile,String connection,String origin,JSONArray replies){return new JSONArray();}}
   static boolean hasPending(Context c){return hasPending(new JSONArray(c.prefs.value));}
   static final List<String> requests=new ArrayList<>();
   static JSONObject get(AssistantRegistry.Connection c,String route){requests.add(route);return new JSONObject().put("state","running").put("replies",new JSONArray());}
+  static JSONObject request(AssistantRegistry.Connection c,String route,JSONObject payload){return get(c,route);}
 ''')
 probe=probe.replace('String value;SharedPreferences', 'Map<String,Integer> ints=new HashMap<>();int getInt(String k,int d){return ints.getOrDefault(k,d);}SharedPreferences putInt(String k,int n){ints.put(k,n);return this;}void apply(){}String value;SharedPreferences')
 start=probe.index('  public static void main(String[] args){')
@@ -40,7 +42,12 @@ probe=probe[:start]+'''  public static void main(String[] args){
     int count=requests.size();check(c,h,()->true);check(requests.size()==count,"cancelled worker made requests");MessageNotifications.visible=true;check(c,h,()->false);MessageNotifications.visible=false;check(requests.size()==count,"foreground duplicated background requests");
     JSONObject cancelled=new JSONObject().put("role","assistant").put("state","pending").put("handoffId","old").put("cancelledByOwner",true);check(!SyncPolicy.pending(new JSONArray().put(cancelled)),"cancelled record keeps radio polling");
     c.prefs.value=new JSONArray().toString();schedule(c);check(c.scheduler.job==null,"last completion did not cancel job");
-    System.out.println("PASS: zero idle requests; two-minute burst; four-request budget; chat/job fairness; idempotent scheduler; cancellation and foreground exclusion");
+    for(int i=0;i<4;i++)PocketInbox.sources.add(new AssistantRegistry.Connection());
+    schedule(c);check(c.scheduler.job!=null,"configured source without local chats lost inbox schedule");
+    count=requests.size();check(c,h,()->false);check(requests.size()==count+2,"inbox check was not bounded to two sources without local chats");
+    check(!hasPending(c),"empty inbox enabled a permanent foreground burst");
+    PocketInbox.sources.clear();schedule(c);check(c.scheduler.job==null,"removed sources kept idle polling alive");
+    System.out.println("PASS: idle/unconfigured exclusion; bounded inbox discovery without chats; two-minute burst; request budgets; chat/job fairness; idempotent scheduler; cancellation and foreground exclusion");
   }
 '''+probe[end:]
 probe=probe.rsplit('}',1)[0]+methods+'\n}\n'

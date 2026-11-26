@@ -51,6 +51,8 @@ public final class MainActivity extends Activity {
     private JSONObject selectionChat;
     private final Set<JSONObject> selectedMessages=Collections.newSetFromMap(new IdentityHashMap<JSONObject,Boolean>());
     private int replyChatIndex;
+    private int inboxPollIndex;
+    private boolean inboxTurn;
     private String server, token="", pollError="";
     private final Map<String,JSONArray> assistantProjects=new HashMap<>(), assistantModels=new HashMap<>();
     private final Map<String,String> assistantModelOrigins=new HashMap<>();
@@ -58,7 +60,7 @@ public final class MainActivity extends Activity {
     private String renderedModelKey="";
     private final Map<String,Integer> activeNetwork=new HashMap<>(), pollCursor=new HashMap<>();
     private long lastCheck;
-    private final Runnable tick=new Runnable(){public void run(){if(foreground){if(repliesTurn)pollReplies();else poll();repliesTurn=!repliesTurn;main.postDelayed(this,MessageSyncService.hasPending(chats)?2500:15000);}}};
+    private final Runnable tick=new Runnable(){public void run(){if(foreground){if(repliesTurn)pollDelivery();else poll();repliesTurn=!repliesTurn;main.postDelayed(this,MessageSyncService.hasPending(chats)?2500:15000);}}};
     /** Restore legacy chats as Gonets chats and retain their original delivery endpoint. */
     @Override public void onCreate(Bundle state){
         super.onCreate(state);
@@ -217,6 +219,7 @@ public final class MainActivity extends Activity {
     private JSONObject nextPending(String assistant){
         ArrayList<JSONObject> pending=new ArrayList<>();
         for(int i=0;i<chats.length();i++){
+            if(chats.optJSONObject(i).optBoolean("archived"))continue;
             JSONArray list=chats.optJSONObject(i).optJSONArray("messages");
             if(list==null)continue;
             for(int j=0;j<list.length();j++){
@@ -552,15 +555,35 @@ public final class MainActivity extends Activity {
         return changed;
     }
     static boolean applyChatReplies(JSONObject chat,JSONArray updates){return applyCodexReplies(chat.optJSONArray("messages"),ChatHistory.visibleReplies(chat,updates));}
-    /** Poll Codex updates through the selected chat's assistant without blocking the other assistant. */
+    /** Fetch a source inbox without needing a local chat, then acknowledge only persisted versions. */
+    private void pollInbox(){
+        ArrayList<AssistantRegistry.Connection> sources=PocketInbox.connections(prefs);if(sources.isEmpty())return;
+        final AssistantRegistry.Connection connection=sources.get((inboxPollIndex++)%sources.size());final String assistant=connection.profileId;
+        if(activeNetwork.getOrDefault(assistant,0)>0)return;beginNetwork(assistant);
+        executor(assistant).execute(()->{try{
+            JSONArray replies=apiConnection(connection,"/mobile/control/inbox",null).optJSONArray("replies");
+            postAlive(()->{try{
+                JSONObject receipts=new JSONObject(prefs.getString("pocketInboxReceipts","{}"));
+                JSONArray acknowledgements=PocketInbox.merge(chats,receipts,assistant,connection.id,connection.origin,replies);
+                if(!prefs.edit().putString("chats",chats.toString()).putString("pocketInboxReceipts",receipts.toString()).commit())return;
+                notifyReceived();save();
+                if(replies!=null&&replies.length()>0)render();
+                executor(assistant).execute(()->{for(int i=0;i<acknowledgements.length();i++)try{apiConnection(connection,"/mobile/control/inbox/ack",acknowledgements.optJSONObject(i));}catch(Exception ignored){}});
+            }catch(Exception ignored){}finally{finishNetwork(assistant);}});
+        }catch(Exception error){postAlive(()->finishNetwork(assistant));}});
+    }
+    /** Alternate source inbox discovery with legacy per-chat reply polling. */
+    private void pollDelivery(){inboxTurn=!inboxTurn;if(inboxTurn)pollInbox();else pollReplies();}
+    /** Poll updates for an existing active chat through its original assistant. */
     private void pollReplies(){
         if(chats.length()==0)return;
-        ArrayList<JSONObject> waiting=new ArrayList<>();for(int i=0;i<chats.length();i++){JSONObject item=chats.optJSONObject(i);if(SyncPolicy.pending(item.optJSONArray("messages")))waiting.add(item);}
+        ArrayList<JSONObject> waiting=new ArrayList<>();for(int i=0;i<chats.length();i++){JSONObject item=chats.optJSONObject(i);if(!item.optBoolean("archived")&&SyncPolicy.pending(item.optJSONArray("messages")))waiting.add(item);}
         final JSONObject chat=waiting.isEmpty()?current:waiting.get((replyChatIndex++)%waiting.size());final String id=chat.optString("id"),assistant=assistantId(chat),origin=chatEndpoint(chat);
+        if(chat.optBoolean("archived"))return;
         if(origin.isEmpty()||activeNetwork.getOrDefault(assistant,0)>0)return;beginNetwork(assistant);
         executor(assistant).execute(()->{try{
             JSONObject response=apiConnection(chatConnection(chat),"/mobile/control/replies?chatId="+id,null);
-            postAlive(()->{finishNetwork(assistant);if(applyChatReplies(chat,response.optJSONArray("replies"))){notifyReceived();save();if(current==chat)render();}});
+            postAlive(()->{finishNetwork(assistant);if(!chat.optBoolean("archived")&&applyChatReplies(chat,response.optJSONArray("replies"))){notifyReceived();save();if(current==chat)render();}});
         }catch(Exception error){postAlive(()->{finishNetwork(assistant);});}});
     }
     private JSONObject publicJson(String location) throws Exception {HttpsURLConnection c=(HttpsURLConnection)new URL(location).openConnection();c.setConnectTimeout(10000);c.setReadTimeout(15000);c.setRequestProperty("User-Agent","BionicPocket");c.setRequestProperty("Cache-Control","no-cache");try{if(c.getResponseCode()!=200)throw new IOException("Обновления недоступны");return new JSONObject(read(c.getInputStream(),100000));}finally{c.disconnect();}}
@@ -594,7 +617,7 @@ public final class MainActivity extends Activity {
         return !legacy&&!same;
     }
     private void notifyReceived(){
-        for(int i=0;i<chats.length();i++){JSONObject chat=chats.optJSONObject(i);JSONArray list=chat.optJSONArray("messages");if(list==null)continue;
+        for(int i=0;i<chats.length();i++){JSONObject chat=chats.optJSONObject(i);if(chat.optBoolean("archived"))continue;JSONArray list=chat.optJSONArray("messages");if(list==null)continue;
             for(int j=0;j<list.length();j++){JSONObject m=list.optJSONObject(j);if(!"assistant".equals(m.optString("role"))||m.optLong("receivedAt",0)==0)continue;
                 String key=m.optString("codexReplyId",m.optString("jobId")),version=m.optString("codexReplyVersion",m.optString("state"));
                 if(MessageNotifications.claim(this,chat.optString("id"),m)&&!(foreground&&chat==current))MessageNotifications.received(this,chat.optString("id"),chat.optString("title","Bionic"),key,m.optString("content"));
